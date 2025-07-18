@@ -35,10 +35,15 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.security:spring-security-ldap")
 
-    // Git Operations (JGit)
-    implementation("org.eclipse.jgit:org.eclipse.jgit:6.8.0.202311291450-r")
-    implementation("org.eclipse.jgit:org.eclipse.jgit.http.server:6.8.0.202311291450-r")
-    implementation("org.eclipse.jgit:org.eclipse.jgit.ssh.jsch:6.8.0.202311291450-r")
+    // JGit for Git operations
+    implementation("org.eclipse.jgit:org.eclipse.jgit:7.0.0.202409031743-r")
+    implementation("org.eclipse.jgit:org.eclipse.jgit.http.server:7.0.0.202409031743-r")
+    implementation("org.eclipse.jgit:org.eclipse.jgit.ssh.apache:7.3.0.202506031305-r")
+    
+    // Apache SSHD for SSH server
+    implementation("org.apache.sshd:sshd-core:2.12.0")
+    implementation("org.apache.sshd:sshd-common:2.12.0")
+    implementation("org.apache.sshd:sshd-netty:2.11.0")
 
     // Database
     implementation("org.flywaydb:flyway-core:9.22.3")

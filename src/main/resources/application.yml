@@ -55,9 +55,43 @@ spring:
 # Gerrit-specific configuration
 gerrit:
   git:
-    repositories-path: ${GERRIT_GIT_PATH:./git-repositories}
-    max-repository-size: 1GB
-    gc-interval: 24h
+    repository-base-path: ${GERRIT_GIT_PATH:./repositories}
+    max-cached-repositories: 100
+    repository-cache-ttl-seconds: 300
+    operation-timeout-seconds: 300
+    lfs-enabled: false
+    lfs-max-file-size: 104857600  # 100MB
+    lfs-storage-path: ${GERRIT_LFS_PATH:./lfs}
+    anonymous-read-enabled: true
+    validate-repository-names: true
+    allowed-repository-name-pattern: "^[a-zA-Z0-9._-]+$"
+    max-repository-name-length: 255
+    http-enabled: true
+    http-receive-pack-enabled: true
+    http-upload-pack-enabled: true
+    ssh-enabled: true
+    ssh-host: "localhost"
+    ssh-port: 29418
+    ssh-host-key-path: ${GERRIT_SSH_HOST_KEY:./ssh_host_key}
+    ssh-idle-timeout-seconds: 300
+    ssh-read-timeout-seconds: 30
+    receive-pack-enabled: true
+    upload-pack-enabled: true
+    push-timeout-seconds: 300
+    fetch-timeout-seconds: 300
+    allow-partial-clone: true
+    virtual-branches-enabled: true
+    max-patch-sets-per-change: 100
+    change-id-validation-enabled: true
+    change-id-required: true
+    auto-generate-change-id: false
+    change-id-generation-enabled: true
+    ref-advertisement-enabled: true
+    push-hook-enabled: true
+    gc-enabled: true
+    gc-interval-hours: 24
+    pack-refs-enabled: true
+    pack-refs-interval-hours: 168
 
   auth:
     allow-anonymous: true
@@ -169,7 +203,43 @@ spring:
 
 gerrit:
   git:
-    repositories-path: ./test-repositories
+    repository-base-path: ./test-repositories
+    max-cached-repositories: 10
+    repository-cache-ttl-seconds: 60
+    operation-timeout-seconds: 60
+    lfs-enabled: false
+    lfs-max-file-size: 104857600  # 100MB
+    lfs-storage-path: ./test-lfs
+    anonymous-read-enabled: true
+    validate-repository-names: true
+    allowed-repository-name-pattern: "^[a-zA-Z0-9._-]+$"
+    max-repository-name-length: 255
+    http-enabled: true
+    http-receive-pack-enabled: true
+    http-upload-pack-enabled: true
+    ssh-enabled: false
+    ssh-host: "localhost"
+    ssh-port: 29418
+    ssh-host-key-path: ./test-ssh-key
+    ssh-idle-timeout-seconds: 300
+    ssh-read-timeout-seconds: 30
+    receive-pack-enabled: true
+    upload-pack-enabled: true
+    push-timeout-seconds: 300
+    fetch-timeout-seconds: 300
+    allow-partial-clone: true
+    virtual-branches-enabled: true
+    max-patch-sets-per-change: 50
+    change-id-validation-enabled: true
+    change-id-required: true
+    auto-generate-change-id: false
+    change-id-generation-enabled: true
+    ref-advertisement-enabled: true
+    push-hook-enabled: true
+    gc-enabled: false
+    gc-interval-hours: 24
+    pack-refs-enabled: false
+    pack-refs-interval-hours: 168
 
   auth:
     allow-anonymous: true
