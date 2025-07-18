@@ -1,0 +1,182 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain,text/css,text/javascript,application/javascript
+
+spring:
+  application:
+    name: gerrit
+
+  profiles:
+    active: dev
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gerrit
+    username: gerrit
+    password: gerrit_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        use_sql_comments: true
+        types:
+          contributor: io.hypersistence.utils.hibernate.type.json.JsonType
+
+  flyway:
+    enabled: false
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=1000,expireAfterAccess=300s
+
+  security:
+    user:
+      name: admin
+      password: admin
+      roles: ADMIN
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: true
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Gerrit-specific configuration
+gerrit:
+  git:
+    repositories-path: ${GERRIT_GIT_PATH:./git-repositories}
+    max-repository-size: 1GB
+    gc-interval: 24h
+
+  auth:
+    allow-anonymous: true
+    session-timeout: 30m
+    jwt:
+      secret: ${JWT_SECRET:changeme-in-production}
+      expiration: 24h
+
+  permissions:
+    cache-size: 10000
+    cache-ttl: 15m
+
+  review:
+    max-comment-size: 10000
+    max-patch-size: 32MB
+
+# Management and monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  info:
+    git:
+      mode: full
+
+# Logging configuration
+logging:
+  level:
+    root: INFO
+    ai.fluxuate.gerrit: DEBUG
+    org.springframework.security: DEBUG
+    org.eclipse.jgit: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# OpenAPI/Swagger configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+  show-actuator: true
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:gerrit}
+    username: ${DB_USER:gerrit}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+gerrit:
+  auth:
+    allow-anonymous: false
+    jwt:
+      secret: ${JWT_SECRET}
+
+logging:
+  level:
+    root: WARN
+    ai.fluxuate.gerrit: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gerrit_test
+    username: gerrit
+    password: gerrit_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+gerrit:
+  git:
+    repositories-path: ./test-repositories
+
+  auth:
+    allow-anonymous: true
+    jwt:
+      secret: test-secret
+
+logging:
+  level:
+    root: INFO
+    ai.fluxuate.gerrit: DEBUG

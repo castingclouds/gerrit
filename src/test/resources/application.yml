@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gerrit_test
+    username: gerrit
+    password: gerrit_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  flyway:
+    enabled: false
+
+logging:
+  level:
+    org.springframework.test: DEBUG
+    org.testcontainers: DEBUG
+    ai.fluxuate.gerrit: DEBUG
+    org.hibernate: DEBUG
+    org.hibernate.boot: DEBUG
+    org.hibernate.boot.model: DEBUG
+    org.hibernate.mapping: DEBUG

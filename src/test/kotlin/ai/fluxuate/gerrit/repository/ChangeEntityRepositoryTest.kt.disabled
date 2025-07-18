@@ -1,0 +1,333 @@
+package ai.fluxuate.gerrit.repository
+
+import ai.fluxuate.gerrit.model.entity.Change
+import ai.fluxuate.gerrit.repository.entity.ChangeEntityRepository
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
+import org.springframework.data.domain.PageRequest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import java.time.Instant
+
+@DataJpaTest
+@Testcontainers
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class ChangeEntityRepositoryTest {
+
+    companion object {
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer<Nothing>("postgres:16-alpine").apply {
+            withDatabaseName("gerrit_test")
+            withUsername("test")
+            withPassword("test")
+        }
+
+        @DynamicPropertySource
+        @JvmStatic
+        fun configureProperties(registry: DynamicPropertyRegistry) {
+            registry.add("spring.datasource.url", postgres::getJdbcUrl)
+            registry.add("spring.datasource.username", postgres::getUsername)
+            registry.add("spring.datasource.password", postgres::getPassword)
+            registry.add("spring.jpa.hibernate.ddl-auto") { "create-drop" }
+        }
+    }
+
+    @Autowired
+    lateinit var repository: ChangeEntityRepository
+
+    @Test
+    fun `should save and find change with basic fields`() {
+        // Given
+        val change = Change.create(
+            id = 1001,
+            changeKey = "I1234567890abcdef",
+            projectName = "android",
+            branchName = "main",
+            ownerId = 42,
+            subject = "Fix critical bug in authentication"
+        )
+
+        // When
+        val savedChange = repository.save(change)
+        val foundChange = repository.findById(1001)
+
+        // Then
+        assertThat(foundChange).isPresent
+        assertThat(foundChange.get().changeKey).isEqualTo("I1234567890abcdef")
+        assertThat(foundChange.get().projectName).isEqualTo("android")
+        assertThat(foundChange.get().subject).isEqualTo("Fix critical bug in authentication")
+        assertThat(foundChange.get().status).isEqualTo(Change.ChangeStatus.NEW)
+    }
+
+    @Test
+    fun `should save and query change with JSONB patch sets`() {
+        // Given
+        val patchSet = Change.PatchSetData(
+            patchSetNumber = 1,
+            commitId = "abcdef1234567890",
+            uploaderId = 42,
+            realUploaderId = 42,
+            createdOn = Instant.now(),
+            description = "Initial patch set",
+            groups = listOf("group1", "group2")
+        )
+
+        val change = Change.create(
+            id = 1002,
+            changeKey = "I2345678901bcdef0",
+            projectName = "android",
+            branchName = "main",
+            ownerId = 42,
+            subject = "Add new feature"
+        ).copy(patchSets = listOf(patchSet))
+
+        // When
+        repository.save(change)
+        val foundChange = repository.findById(1002)
+
+        // Then
+        assertThat(foundChange).isPresent
+        assertThat(foundChange.get().patchSets).hasSize(1)
+        assertThat(foundChange.get().patchSets[0].commitId).isEqualTo("abcdef1234567890")
+        assertThat(foundChange.get().patchSets[0].description).isEqualTo("Initial patch set")
+        assertThat(foundChange.get().patchSets[0].groups).containsExactly("group1", "group2")
+    }
+
+    @Test
+    fun `should save and query change with JSONB comments`() {
+        // Given
+        val comment = Change.CommentData(
+            uuid = "comment-uuid-123",
+            patchSetNumber = 1,
+            filename = "src/main/java/Example.java",
+            lineNumber = 42,
+            authorId = 100,
+            realAuthorId = 100,
+            writtenOn = Instant.now(),
+            message = "This could be improved",
+            side = 1,
+            resolved = false
+        )
+
+        val change = Change.create(
+            id = 1003,
+            changeKey = "I3456789012cdef01",
+            projectName = "android",
+            branchName = "main",
+            ownerId = 42,
+            subject = "Refactor authentication module"
+        ).copy(comments = listOf(comment))
+
+        // When
+        repository.save(change)
+        val foundChange = repository.findById(1003)
+
+        // Then
+        assertThat(foundChange).isPresent
+        assertThat(foundChange.get().comments).hasSize(1)
+        assertThat(foundChange.get().comments[0].uuid).isEqualTo("comment-uuid-123")
+        assertThat(foundChange.get().comments[0].message).isEqualTo("This could be improved")
+        assertThat(foundChange.get().comments[0].filename).isEqualTo("src/main/java/Example.java")
+        assertThat(foundChange.get().comments[0].lineNumber).isEqualTo(42)
+        assertThat(foundChange.get().comments[0].resolved).isFalse()
+    }
+
+    @Test
+    fun `should save and query change with JSONB approvals`() {
+        // Given
+        val approval = Change.ApprovalData(
+            userId = 100,
+            label = "Code-Review",
+            value = 2,
+            grantedOn = Instant.now(),
+            patchSetNumber = 1,
+            copied = false
+        )
+
+        val change = Change.create(
+            id = 1004,
+            changeKey = "I4567890123def012",
+            projectName = "android",
+            branchName = "main",
+            ownerId = 42,
+            subject = "Update documentation"
+        ).copy(approvals = listOf(approval))
+
+        // When
+        repository.save(change)
+        val foundChange = repository.findById(1004)
+
+        // Then
+        assertThat(foundChange).isPresent
+        assertThat(foundChange.get().approvals).hasSize(1)
+        assertThat(foundChange.get().approvals[0].userId).isEqualTo(100)
+        assertThat(foundChange.get().approvals[0].label).isEqualTo("Code-Review")
+        assertThat(foundChange.get().approvals[0].value).isEqualTo(2)
+        assertThat(foundChange.get().approvals[0].copied).isFalse()
+    }
+
+    @Test
+    fun `should find changes by basic queries`() {
+        // Given
+        val change1 = Change.create(1005, "I5678901234ef0123", "android", "main", 42, "Feature A")
+        val change2 = Change.create(1006, "I6789012345f01234", "chrome", "main", 43, "Feature B")
+        val change3 = Change.create(1007, "I7890123456012345", "android", "dev", 42, "Feature C")
+
+        repository.saveAll(listOf(change1, change2, change3))
+
+        // When & Then
+        val androidChanges = repository.findByProjectName("android", PageRequest.of(0, 10))
+        assertThat(androidChanges.content).hasSize(2)
+
+        val ownerChanges = repository.findByOwnerId(42, PageRequest.of(0, 10))
+        assertThat(ownerChanges.content).hasSize(2)
+
+        val newChanges = repository.findByStatus(Change.ChangeStatus.NEW, PageRequest.of(0, 10))
+        assertThat(newChanges.content).hasSize(3)
+
+        val projectAndOwner = repository.findByProjectNameAndStatus("android", Change.ChangeStatus.NEW, PageRequest.of(0, 10))
+        assertThat(projectAndOwner.content).hasSize(2)
+    }
+
+    @Test
+    fun `should find changes by change key`() {
+        // Given
+        val change = Change.create(1008, "I8901234567123456", "android", "main", 42, "Unique change")
+        repository.save(change)
+
+        // When
+        val foundChange = repository.findByChangeKey("I8901234567123456")
+
+        // Then
+        assertThat(foundChange).isNotNull
+        assertThat(foundChange!!.subject).isEqualTo("Unique change")
+    }
+
+    @Test
+    fun `should check if change exists by key`() {
+        // Given
+        val change = Change.create(1009, "I9012345678234567", "android", "main", 42, "Test existence")
+        repository.save(change)
+
+        // When & Then
+        assertThat(repository.existsByChangeKey("I9012345678234567")).isTrue()
+        assertThat(repository.existsByChangeKey("I0000000000000000")).isFalse()
+    }
+
+    @Test
+    fun `should count changes by various criteria`() {
+        // Given
+        val change1 = Change.create(1010, "I0123456789345678", "android", "main", 42, "Count test 1")
+        val change2 = Change.create(1011, "I1234567890456789", "android", "main", 43, "Count test 2")
+        val change3 = Change.create(1012, "I2345678901567890", "chrome", "main", 42, "Count test 3")
+
+        repository.saveAll(listOf(change1, change2, change3))
+
+        // When & Then
+        assertThat(repository.countByStatus(Change.ChangeStatus.NEW)).isEqualTo(3)
+        assertThat(repository.countByOwnerId(42)).isEqualTo(2)
+        assertThat(repository.countByProjectName("android")).isEqualTo(2)
+    }
+
+    @Test
+    fun `should find changes with subject containing text`() {
+        // Given
+        val change1 = Change.create(1013, "I3456789012678901", "android", "main", 42, "Fix authentication bug")
+        val change2 = Change.create(1014, "I4567890123789012", "android", "main", 43, "Add new authentication method")
+        val change3 = Change.create(1015, "I5678901234890123", "android", "main", 44, "Update documentation")
+
+        repository.saveAll(listOf(change1, change2, change3))
+
+        // When
+        val authChanges = repository.findBySubjectContainingIgnoreCase("authentication", PageRequest.of(0, 10))
+
+        // Then
+        assertThat(authChanges.content).hasSize(2)
+        assertThat(authChanges.content.map { it.subject }).allMatch { it.contains("authentication", ignoreCase = true) }
+    }
+
+    @Test
+    fun `should perform advanced search with multiple criteria`() {
+        // Given
+        val change1 = Change.create(1016, "I6789012345901234", "android", "main", 42, "Search test feature")
+        val change2 = Change.create(1017, "I7890123456012345", "chrome", "main", 43, "Another search test")
+        val change3 = Change.create(1018, "I8901234567123456", "android", "dev", 42, "Different feature")
+
+        repository.saveAll(listOf(change1, change2, change3))
+
+        // When
+        val searchResults = repository.searchChanges(
+            searchText = "search",
+            projectName = "android",
+            status = Change.ChangeStatus.NEW,
+            ownerId = 42,
+            isPrivate = false,
+            workInProgress = false,
+            PageRequest.of(0, 10)
+        )
+
+        // Then
+        assertThat(searchResults.content).hasSize(1)
+        assertThat(searchResults.content[0].subject).isEqualTo("Search test feature")
+    }
+
+    @Test
+    fun `should find recently updated changes`() {
+        // Given
+        val now = Instant.now()
+        val oneHourAgo = now.minusSeconds(3600)
+        val change1 = Change.create(1019, "I9012345678234567", "android", "main", 42, "Recent change 1")
+            .copy(lastUpdatedOn = now)
+        val change2 = Change.create(1020, "I0123456789345678", "android", "main", 43, "Old change")
+            .copy(lastUpdatedOn = oneHourAgo)
+
+        repository.saveAll(listOf(change1, change2))
+
+        // When
+        val recentChanges = repository.findRecentlyUpdatedChanges(now.minusSeconds(1800), PageRequest.of(0, 10))
+
+        // Then
+        assertThat(recentChanges.content).hasSize(1)
+        assertThat(recentChanges.content[0].subject).isEqualTo("Recent change 1")
+    }
+
+    @Test
+    fun `should handle change with complex JSONB metadata`() {
+        // Given
+        val attentionEntry = Change.AttentionSetEntry(
+            userId = 100,
+            reason = "Code review required",
+            addedOn = Instant.now()
+        )
+
+        val metadata = Change.ChangeMetadata(
+            originalSubject = "Original subject",
+            hashtags = setOf("bug", "high-priority"),
+            attentionSet = listOf(attentionEntry),
+            customFields = mapOf("priority" to "high", "component" to "auth")
+        )
+
+        val change = Change.create(1021, "I1234567890abcdef", "android", "main", 42, "Complex change")
+            .copy(metadata = metadata)
+
+        // When
+        repository.save(change)
+        val foundChange = repository.findById(1021)
+
+        // Then
+        assertThat(foundChange).isPresent
+        assertThat(foundChange.get().metadata.originalSubject).isEqualTo("Original subject")
+        assertThat(foundChange.get().metadata.hashtags).containsExactly("bug", "high-priority")
+        assertThat(foundChange.get().metadata.attentionSet).hasSize(1)
+        assertThat(foundChange.get().metadata.attentionSet[0].userId).isEqualTo(100)
+        assertThat(foundChange.get().metadata.customFields).hasSize(2)
+        assertThat(foundChange.get().metadata.customFields["priority"]).isEqualTo("high")
+    }
+}

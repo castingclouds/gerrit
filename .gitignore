@@ -1,0 +1,363 @@
+# =============================================================================
+# Modern .gitignore for Java/Kotlin/Groovy Application
+# Spring Boot + Gradle + JPA + Testing
+# =============================================================================
+
+# =============================================================================
+# Compiled Class Files
+# =============================================================================
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.zip
+*.tar.gz
+*.rar
+
+# =============================================================================
+# Gradle Build System
+# =============================================================================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+gradle-app.setting
+!gradle-wrapper.properties
+
+# Gradle cache and wrapper
+.gradletasknamecache
+gradle/wrapper/gradle-wrapper.properties
+
+# =============================================================================
+# Spring Boot
+# =============================================================================
+application-*.properties
+application-*.yml
+application-*.yaml
+!application.properties
+!application.yml
+!application.yaml
+!application-*.properties.example
+!application-*.yml.example
+!application-*.yaml.example
+
+# Spring Boot build info
+build-info.properties
+
+# =============================================================================
+# Java/Kotlin/Groovy
+# =============================================================================
+# Compiled output
+out/
+target/
+bin/
+classes/
+
+# Virtual machine crash logs
+hs_err_pid*
+replay_pid*
+
+# Kotlin
+*.kotlin_builtins
+*.kotlin_module
+*.kotlin_metadata
+
+# =============================================================================
+# IDEs and Editors
+# =============================================================================
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+.idea_modules/
+
+# Eclipse
+.classpath
+.project
+.settings/
+.metadata/
+.recommenders/
+.loadpath
+*.launch
+.factorypath
+
+# Visual Studio Code
+.vscode/
+.history/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# =============================================================================
+# Database
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.h2.db
+*.mv.db
+*.trace.db
+*.lock.db
+
+# Database migration backups
+*.backup
+*.bak
+
+# =============================================================================
+# Logging
+# =============================================================================
+logs/
+*.log
+log/
+*.log.*
+*.gz
+logback.xml
+logback-spring.xml
+
+# =============================================================================
+# Testing
+# =============================================================================
+# Test results
+test-results/
+test-output/
+*.test
+TEST-*.xml
+junit*.xml
+
+# Coverage reports
+coverage/
+.nyc_output/
+*.lcov
+jacoco.exec
+*.exec
+
+# Testcontainers
+.testcontainers/
+
+# =============================================================================
+# Security and Credentials
+# =============================================================================
+# API keys and secrets
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*.truststore
+.env
+.env.local
+.env.*.local
+secrets.properties
+keystore.properties
+
+# OAuth and JWT
+oauth.properties
+jwt.properties
+
+# =============================================================================
+# Operating System
+# =============================================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# =============================================================================
+# Docker and Containers
+# =============================================================================
+Dockerfile.local
+docker-compose.override.yml
+docker-compose.local.yml
+.docker/
+*.dockerignore
+
+# =============================================================================
+# Documentation and Static Site Generators
+# =============================================================================
+# Project-specific documentation exclusions
+*prd*.md
+
+# JavaDoc
+doc/
+docs/api/
+javadoc/
+
+# Sphinx
+docs/_build/
+docs/.doctrees/
+
+# MkDocs
+site/
+
+# =============================================================================
+# Package Managers and Dependencies
+# =============================================================================
+# Node.js (if using for frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Maven (if dual build system)
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# =============================================================================
+# Temporary and Cache Files
+# =============================================================================
+*.tmp
+*.temp
+*.cache
+*.pid
+*.seed
+*.log
+*.out
+*.swp
+*.swo
+
+# JVM temporary files
+.attach_pid*
+
+# =============================================================================
+# Development Tools
+# =============================================================================
+# JProfiler
+*.jprofile
+
+# YourKit
+*.hprof
+
+# Spring Boot DevTools
+.spring-boot-devtools.properties
+
+# =============================================================================
+# CI/CD and Deployment
+# =============================================================================
+.github/workflows/secrets/
+.gitlab-ci-local/
+.jenkins/
+deployment/secrets/
+k8s/secrets/
+helm/secrets/
+
+# =============================================================================
+# Monitoring and Observability
+# =============================================================================
+# Prometheus
+prometheus.yml
+grafana/
+monitoring/
+
+# =============================================================================
+# Application Specific
+# =============================================================================
+# Git repositories data (if app manages Git repos)
+repositories/
+git-data/
+bare-repos/
+
+# File uploads
+uploads/
+files/
+attachments/
+
+# Application cache
+cache/
+tmp/
+
+# =============================================================================
+# Local Development
+# =============================================================================
+# Local configuration overrides
+local.properties
+local.yml
+local.yaml
+dev.properties
+dev.yml
+dev.yaml
+
+# Development databases
+dev.db
+local.db
+
+# Local scripts
+local-*.sh
+local-*.bat
+dev-*.sh
+dev-*.bat
+
+# =============================================================================
+# Archive and Backup Files
+# =============================================================================
+*.orig
+*.bak
+*.backup
+*.old
+*.save
+*~
+
+# =============================================================================
+# Build and Distribution
+# =============================================================================
+dist/
+lib/
+*.distribution
+*.tar
+*.tgz
+
+# Fat JAR exclusions (keep specific ones if needed)
+*-all.jar
+*-fat.jar
+*-uber.jar
+!**/gradle/wrapper/gradle-wrapper.jar
