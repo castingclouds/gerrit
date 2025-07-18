@@ -64,6 +64,8 @@ class GitConfiguration {
     var allowDeletes: Boolean = true
     @field:NotNull
     var allowNonFastForwards: Boolean = false
+    @field:NotNull
+    var allowDirectPush: Boolean = false
 
     // Upload-pack configuration
     @field:NotNull

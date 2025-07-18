@@ -215,6 +215,29 @@ class GitHttpController(
         service: String?,
         authentication: Authentication?
     ): Boolean {
+        // Check if user is authenticated for write operations
+        if (service == "git-receive-pack" && authentication == null) {
+            logger.warn("Unauthenticated push attempt to project: $projectName")
+            return false
+        }
+        
+        // For now, allow read access to all authenticated users and anonymous read access
+        // TODO: Integrate with proper Gerrit permission system
+        if (service == "git-upload-pack") {
+            logger.debug("Allowing read access to project: $projectName for user: ${authentication?.name ?: "anonymous"}")
+            return true
+        }
+        
+        // For push operations, require authentication
+        if (service == "git-receive-pack") {
+            if (authentication != null) {
+                logger.debug("Allowing write access to project: $projectName for user: ${authentication.name}")
+                return true
+            }
+            return false
+        }
+        
+        // Default to allowing access for other operations
         return true
     }
 
@@ -224,8 +247,17 @@ class GitHttpController(
         authentication: Authentication?
     ): List<String> {
         val errors = mutableListOf<String>()
+        
+        // Validate authentication for push operations
+        if (authentication == null) {
+            errors.add("Authentication required for push operations")
+            return errors
+        }
+        
         for (command in commands) {
             val refName = command.refName
+            
+            // Validate refs/for/* pushes (Gerrit change creation)
             if (refName.startsWith("refs/for/")) {
                 try {
                     val repository = gitRepositoryService.openRepository(projectName)
@@ -234,9 +266,20 @@ class GitHttpController(
                         try {
                             val commit = revWalk.parseCommit(command.newId)
                             val changeId = changeIdService.extractChangeId(commit.fullMessage)
+                            
                             if (changeId == null) {
                                 errors.add("Missing Change-Id in commit ${command.newId.name}")
+                            } else if (!isValidChangeId(changeId)) {
+                                errors.add("Invalid Change-Id format in commit ${command.newId.name}: $changeId")
                             }
+                            
+                            // Validate target branch exists
+                            val targetBranch = refName.removePrefix("refs/for/")
+                            val branchRef = repo.findRef("refs/heads/$targetBranch")
+                            if (branchRef == null) {
+                                errors.add("Target branch '$targetBranch' does not exist")
+                            }
+                            
                         } finally {
                             revWalk.dispose()
                         }
@@ -245,7 +288,23 @@ class GitHttpController(
                     errors.add("Error validating commit ${command.newId.name}: ${e.message}")
                 }
             }
+            
+            // Validate direct branch pushes
+            else if (refName.startsWith("refs/heads/")) {
+                // Check if direct pushes are allowed
+                if (!gitConfig.allowDirectPush) {
+                    errors.add("Direct pushes to branches are not allowed. Use refs/for/* instead.")
+                }
+            }
+            
+            // Validate tag operations
+            else if (refName.startsWith("refs/tags/")) {
+                if (command.type == org.eclipse.jgit.transport.ReceiveCommand.Type.DELETE && !gitConfig.allowDeletes) {
+                    errors.add("Tag deletion not allowed: $refName")
+                }
+            }
         }
+        
         return errors
     }
 
@@ -262,13 +321,14 @@ class GitHttpController(
         val repository = gitRepositoryService.openRepository(projectName)
         repository.use { repo ->
             try {
+                val userId = extractUserId(authentication)
                 val result = changeService.processRefsForPush(
                     repository = repo,
                     refName = refName,
                     oldObjectId = command.oldId,
                     newObjectId = newObjectId,
                     projectName = projectName,
-                    ownerId = 1 // TODO: Get actual user ID from authentication
+                    ownerId = userId
                 )
                 
                 if (result.success) {
@@ -290,5 +350,46 @@ class GitHttpController(
         val refName = command.refName
         val newObjectId = command.newId
         logger.info("Processing direct branch push to: $refName, commit: ${newObjectId.name}")
+        
+        // TODO: Implement direct branch push logic if needed
+        // For now, log the operation
+        logger.debug("Direct push by user: ${authentication?.name ?: "anonymous"} to ref: $refName")
+    }
+
+    /**
+     * Validates Change-Id format according to Gerrit standards.
+     */
+    private fun isValidChangeId(changeId: String): Boolean {
+        // Change-Id should be "I" followed by 40 hexadecimal characters
+        return changeId.matches(Regex("^I[0-9a-f]{40}$"))
+    }
+
+    /**
+     * Extracts user ID from authentication object.
+     */
+    private fun extractUserId(authentication: Authentication?): Int {
+        if (authentication == null) {
+            logger.warn("No authentication provided, using anonymous user ID")
+            return 0 // Anonymous user
+        }
+        
+        // Try to extract user ID from authentication details
+        // This is a simplified implementation - in a real system, you'd integrate with your user management
+        return when (authentication.principal) {
+            is org.springframework.security.core.userdetails.UserDetails -> {
+                val userDetails = authentication.principal as org.springframework.security.core.userdetails.UserDetails
+                // For now, use a hash of the username as user ID
+                // TODO: Integrate with proper user management system
+                Math.abs(userDetails.username.hashCode())
+            }
+            is String -> {
+                // Principal is just a username string
+                Math.abs(authentication.name.hashCode())
+            }
+            else -> {
+                logger.warn("Unknown authentication principal type: ${authentication.principal?.javaClass}")
+                Math.abs(authentication.name.hashCode())
+            }
+        }
     }
 }
