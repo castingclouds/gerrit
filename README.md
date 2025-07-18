@@ -66,7 +66,7 @@ gerrit/
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/castingclouds/gerrit
    cd gerrit
    ```
 
@@ -74,6 +74,22 @@ gerrit/
    ```bash
    chmod +x start-postgres.sh
    ./start-postgres.sh
+   ->
+   PostgreSQL container started!
+   Connection details:
+     Host: localhost
+     Port: 5432
+     Database: gerrit
+     User: gerrit
+     Password: gerrit_password
+
+   Connection URL: jdbc:postgresql://localhost:5432/gerrit
+   
+   To connect with psql:
+     docker exec -it gerrit-postgres psql -U gerrit -d gerrit
+   
+   To stop and remove the container:
+     docker rm -f gerrit-postgres
    ```
 
 3. **Build and run the application**
@@ -118,6 +134,12 @@ gerrit/
   - [x] Repository interfaces with complex JSONB queries
   - [x] Database migration and schema management
   - [x] Integration tests with TestContainers
+
+- [x] **Advanced Repository Implementation**
+  - [x] **Hybrid Storage Strategy**: Dedicated entity tables (CommentEntity, ApprovalEntity, PatchSetEntity) with JSONB fallback in ChangeEntity
+  - [x] **Complex Query Patterns**: Range-based queries, metadata filtering, full-text search, and date-based filtering
+  - [x] **Performance Optimizations**: Query hints, native SQL for complex operations, and efficient pagination
+  - [x] **Comprehensive Test Coverage**: TestContainers integration, edge case testing, and transaction management
 
 ### 🔄 In Progress
 
@@ -164,11 +186,32 @@ spring:
       ddl-auto: create  # Auto-creates tables from JPA annotations
 ```
 
-### Application Profiles
+### Hybrid Storage Strategy
 
-- **dev**: Development profile with debug logging
-- **test**: Testing profile with H2 in-memory database
-- **prod**: Production profile with optimized settings
+**Key Learning**: We implemented a hybrid approach that provides both flexibility and performance:
+
+- **Dedicated Tables**: CommentEntity, ApprovalEntity, PatchSetEntity for structured queries
+- **JSONB Storage**: Complex nested data in ChangeEntity for flexibility
+- **Best of Both Worlds**: Structured queries where needed, document flexibility where beneficial
+
+```kotlin
+// Structured entity for complex queries
+@Entity
+data class CommentEntity(
+    @Id @GeneratedValue val id: Long? = null,
+    val changeId: Long,
+    val message: String,
+    val filePath: String?,
+    val lineNumber: Int?,
+    // Range comments support
+    val rangeStartLine: Int?,
+    val rangeEndLine: Int?,
+    // JSONB for flexible metadata
+    @Type(type = "io.hypersistence.utils.hibernate.type.json.JsonType")
+    @Column(columnDefinition = "jsonb")
+    val metadata: Map<String, Any> = emptyMap()
+)
+```
 
 ## 🎨 Key Features
 
@@ -193,6 +236,55 @@ data class Change(
 )
 ```
 
+### Advanced Query Patterns
+
+**Key Learning**: We developed sophisticated query patterns for complex use cases:
+
+#### Range-Based Queries
+```kotlin
+@Query("""
+    SELECT c FROM CommentEntity c 
+    WHERE c.changeId = :changeId 
+    AND c.filePath = :filePath 
+    AND c.rangeStartLine IS NOT NULL 
+    AND c.rangeEndLine IS NOT NULL
+    AND (c.rangeStartLine <= :endLine AND c.rangeEndLine >= :startLine)
+    ORDER BY c.rangeStartLine ASC, c.writtenOn ASC
+""")
+fun findRangeCommentsOverlapping(
+    @Param("changeId") changeId: Long,
+    @Param("filePath") filePath: String,
+    @Param("startLine") startLine: Int,
+    @Param("endLine") endLine: Int
+): List<CommentEntity>
+```
+
+#### JSONB Metadata Filtering
+```kotlin
+@Query(value = """
+    SELECT * FROM comments c 
+    WHERE c.metadata @> CAST(:metadataFilter AS jsonb)
+    ORDER BY c.created DESC
+""", nativeQuery = true)
+fun findByMetadata(@Param("metadataFilter") metadataFilter: String, pageable: Pageable): Page<CommentEntity>
+```
+
+#### Performance-Optimized Queries
+```kotlin
+@Query(value = """
+    SELECT * FROM approvals a 
+    WHERE a.change_id = :changeId 
+    AND a.value > 0 
+    AND a.label = ANY(CAST(:labels AS text[]))
+    ORDER BY a.granted DESC
+""", nativeQuery = true)
+@QueryHints(QueryHint(name = "org.hibernate.cacheable", value = "true"))
+fun findPositiveApprovalsByLabels(
+    @Param("changeId") changeId: Long,
+    @Param("labels") labels: Array<String>
+): List<ApprovalEntity>
+```
+
 ### Powerful JSONB Queries
 
 ```kotlin
@@ -204,23 +296,6 @@ data class Change(
 fun findChangesWithCommentsByUser(userId: Int): List<Change>
 ```
 
-### Type-Safe Repository Pattern
-
-```kotlin
-interface ChangeRepository : JpaRepository<Change, Int> {
-    fun findByProjectNameAndStatus(project: String, status: ChangeStatus): List<Change>
-    fun findByOwnerIdAndWorkInProgress(ownerId: Int, wip: Boolean): List<Change>
-}
-```
-
-## 📚 Documentation
-
-- **[Project Rules & Best Practices](.zed/project-rules.md)** - Development guidelines and patterns
-- **[PostgreSQL JSONB Setup](POSTGRES_JSONB_SETUP.md)** - Database configuration and usage
-- **[Domain Models](src/main/kotlin/ai/fluxuate/gerrit/model/README.md)** - Core entity documentation
-- **[Repository Layer](src/main/kotlin/ai/fluxuate/gerrit/repository/README.md)** - Data access patterns
-- **[Modernization PRD](GERRIT_MODERNIZATION_PRD.md)** - Detailed project roadmap
-
 ## 🧪 Testing
 
 ### Unit Tests
@@ -229,14 +304,56 @@ interface ChangeRepository : JpaRepository<Change, Int> {
 ```
 
 ### Integration Tests with TestContainers
-```bash
-./gradlew integrationTest
+
+**Key Learning**: We developed comprehensive testing strategies using TestContainers:
+
+```kotlin
+@SpringBootTest
+@ActiveProfiles("test")
+@Transactional
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+class CommentRepositoryTest {
+    
+    @Autowired
+    private lateinit var commentRepository: CommentRepository
+    
+    @Test
+    fun `should find range comments overlapping with line range`() {
+        // Test complex range-based queries
+        val overlappingComments = commentRepository.findRangeCommentsOverlapping(
+            changeId = 1001L,
+            filePath = "src/main/Main.java",
+            startLine = 15,
+            endLine = 25
+        )
+        
+        assertEquals(1, overlappingComments.size)
+        assertEquals("This is a range comment", overlappingComments[0].message)
+    }
+    
+    @Test
+    fun `should find comments by metadata filter`() {
+        // Test JSONB metadata queries
+        val metadataFilter = """{"type": "suggestion", "priority": "high"}"""
+        val page = commentRepository.findByMetadata(metadataFilter, PageRequest.of(0, 10))
+        
+        assertTrue(page.content.isNotEmpty())
+    }
+}
 ```
 
 ### Test Coverage
 ```bash
 ./gradlew jacocoTestReport
 ```
+
+### Testing Best Practices
+
+**Key Learnings**:
+- **TestContainers**: Use real PostgreSQL for integration tests
+- **Transaction Management**: Proper cleanup with `@DirtiesContext`
+- **Edge Case Testing**: Test range overlaps, null values, and boundary conditions
+- **Performance Testing**: Verify query performance with large datasets
 
 ## 🔍 Monitoring & Observability
 
