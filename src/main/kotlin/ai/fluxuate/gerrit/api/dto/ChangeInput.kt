@@ -23,11 +23,17 @@ data class ChangeInput(
 )
 
 /**
- * Account input for change operations.
+ * Account input for change operations and account management.
  */
 data class AccountInput(
     val name: String? = null,
-    val email: String? = null
+    val email: String? = null,
+    val username: String? = null,
+    val displayName: String? = null,
+    val status: String? = null,
+    val active: Boolean? = null,
+    val sshKey: String? = null,
+    val httpPassword: String? = null
 )
 
 /**

@@ -94,7 +94,13 @@ data class AccountInfo(
     val status: String? = null,
     val inactive: Boolean? = null,
     val tags: List<String> = emptyList()
-)
+) {
+    // CamelCase aliases for Accounts API compatibility
+    val accountId: Long get() = _account_id
+    val displayName: String? get() = display_name
+    val secondaryEmails: List<String> get() = secondary_emails
+    val moreAccounts: Boolean? get() = _more_accounts
+}
 
 /**
  * Avatar information.
