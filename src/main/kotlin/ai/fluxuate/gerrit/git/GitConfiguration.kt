@@ -65,6 +65,16 @@ class GitConfiguration {
     @field:NotNull
     var allowNonFastForwards: Boolean = false
 
+    // Upload-pack configuration
+    @field:NotNull
+    var maxUploadObjects: Int = 10000
+    @field:NotNull
+    var maxUploadRefs: Int = 1000
+    @field:NotNull
+    var maxNegotiationRounds: Int = 100
+    @field:NotNull
+    var maxPackObjects: Int = 50000
+
     // Repository Validation
     @field:NotNull
     var validateRepositoryNames: Boolean = true
