@@ -3,14 +3,20 @@ package ai.fluxuate.gerrit.service
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
+import ai.fluxuate.gerrit.api.dto.*
+import ai.fluxuate.gerrit.api.exception.NotFoundException
+import ai.fluxuate.gerrit.api.exception.BadRequestException
+import ai.fluxuate.gerrit.api.exception.ConflictException
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevWalk
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 import java.util.regex.Pattern
+import kotlin.random.Random
 
 
 @Service
@@ -271,6 +277,428 @@ class ChangeService(
         val lastTwoDigits = String.format("%02d", changeId % 100)
         return "refs/changes/$lastTwoDigits/$changeId/$patchSetId"
     }
+    
+    // REST API methods
+    
+    /**
+     * Query changes with optional filters.
+     */
+    fun queryChanges(
+        query: String?,
+        limit: Int?,
+        start: Int?,
+        options: List<String>?
+    ): List<ChangeInfo> {
+        // For now, return all changes with basic pagination
+        val pageSize = limit ?: 25
+        val offset = start ?: 0
+        
+        val changes = changeRepository.findAll()
+            .drop(offset)
+            .take(pageSize)
+            
+        return changes.map { convertToChangeInfo(it) }
+    }
+
+    /**
+     * Create a new change.
+     */
+    @Transactional
+    fun createChange(input: ChangeInput): ChangeInfo {
+        // Validate input
+        if (input.project.isBlank()) {
+            throw BadRequestException("Project name is required")
+        }
+        if (input.branch.isBlank()) {
+            throw BadRequestException("Branch name is required")
+        }
+        if (input.subject.isBlank()) {
+            throw BadRequestException("Subject is required")
+        }
+
+        // Create new change entity
+        val change = ChangeEntity(
+            changeKey = generateChangeId(),
+            ownerId = 1, // TODO: Get from security context
+            projectName = input.project,
+            destBranch = input.branch,
+            subject = input.subject,
+            topic = input.topic,
+            status = input.status?.let { convertToEntityStatus(it) } ?: ChangeStatus.NEW,
+            createdOn = Instant.now(),
+            lastUpdatedOn = Instant.now()
+        )
+
+        val savedChange = changeRepository.save(change)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Get change details by ID.
+     */
+    fun getChange(changeId: String, options: List<String>?): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        return convertToChangeInfo(change)
+    }
+
+    /**
+     * Update change details.
+     */
+    @Transactional
+    fun updateChange(changeId: String, input: ChangeInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        // Create updated change (since fields are val, we need to copy)
+        val updatedChange = change.copy(
+            subject = input.subject,
+            topic = input.topic,
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Delete a change.
+     */
+    @Transactional
+    fun deleteChange(changeId: String) {
+        val change = findChangeByIdentifier(changeId)
+        
+        // Only allow deletion of NEW changes
+        if (change.status != ChangeStatus.NEW) {
+            throw ConflictException("Cannot delete change with status ${change.status}")
+        }
+        
+        changeRepository.delete(change)
+    }
+
+    /**
+     * Abandon a change.
+     */
+    @Transactional
+    fun abandonChange(changeId: String, input: AbandonInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        if (change.status != ChangeStatus.NEW) {
+            throw ConflictException("Cannot abandon change with status ${change.status}")
+        }
+        
+        val updatedChange = change.copy(
+            status = ChangeStatus.ABANDONED,
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Restore a change.
+     */
+    @Transactional
+    fun restoreChange(changeId: String, input: RestoreInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        if (change.status != ChangeStatus.ABANDONED) {
+            throw ConflictException("Cannot restore change with status ${change.status}")
+        }
+        
+        val updatedChange = change.copy(
+            status = ChangeStatus.NEW,
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Submit a change.
+     */
+    @Transactional
+    fun submitChange(changeId: String, input: SubmitInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        if (change.status != ChangeStatus.NEW) {
+            throw ConflictException("Cannot submit change with status ${change.status}")
+        }
+        
+        val updatedChange = change.copy(
+            status = ChangeStatus.MERGED,
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Rebase a change.
+     */
+    @Transactional
+    fun rebaseChange(changeId: String, input: RebaseInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        if (change.status != ChangeStatus.NEW) {
+            throw ConflictException("Cannot rebase change with status ${change.status}")
+        }
+        
+        // TODO: Implement actual rebase logic with Git operations
+        val updatedChange = change.copy(lastUpdatedOn = Instant.now())
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Cherry-pick a change.
+     */
+    @Transactional
+    fun cherryPickChange(changeId: String, revisionId: String, input: CherryPickInput): ChangeInfo {
+        val originalChange = findChangeByIdentifier(changeId)
+        
+        // Create new change for cherry-pick
+        val cherryPickChange = ChangeEntity(
+            changeKey = generateChangeId(),
+            ownerId = originalChange.ownerId,
+            projectName = originalChange.projectName,
+            destBranch = input.destination,
+            subject = input.message ?: originalChange.subject,
+            topic = originalChange.topic,
+            status = ChangeStatus.NEW,
+            createdOn = Instant.now(),
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(cherryPickChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Move a change to a different branch.
+     */
+    @Transactional
+    fun moveChange(changeId: String, input: MoveInput): ChangeInfo {
+        val change = findChangeByIdentifier(changeId)
+        
+        if (change.status != ChangeStatus.NEW) {
+            throw ConflictException("Cannot move change with status ${change.status}")
+        }
+        
+        val updatedChange = change.copy(
+            destBranch = input.destination_branch,
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(updatedChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Revert a change.
+     */
+    @Transactional
+    fun revertChange(changeId: String, input: RevertInput): ChangeInfo {
+        val originalChange = findChangeByIdentifier(changeId)
+        
+        if (originalChange.status != ChangeStatus.MERGED) {
+            throw ConflictException("Cannot revert change with status ${originalChange.status}")
+        }
+        
+        // Create revert change
+        val revertChange = ChangeEntity(
+            changeKey = generateChangeId(),
+            ownerId = originalChange.ownerId,
+            projectName = originalChange.projectName,
+            destBranch = originalChange.destBranch,
+            subject = input.message ?: "Revert \"${originalChange.subject}\"",
+            topic = input.topic,
+            status = ChangeStatus.NEW,
+            createdOn = Instant.now(),
+            lastUpdatedOn = Instant.now()
+        )
+        
+        val savedChange = changeRepository.save(revertChange)
+        return convertToChangeInfo(savedChange)
+    }
+
+    /**
+     * Get topic of a change.
+     */
+    fun getTopic(changeId: String): String {
+        val change = findChangeByIdentifier(changeId)
+        return change.topic ?: ""
+    }
+
+    /**
+     * Set topic of a change.
+     */
+    @Transactional
+    fun setTopic(changeId: String, input: TopicInput): String {
+        val change = findChangeByIdentifier(changeId)
+        val updatedChange = change.copy(
+            topic = input.topic,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+        return updatedChange.topic ?: ""
+    }
+
+    /**
+     * Delete topic of a change.
+     */
+    @Transactional
+    fun deleteTopic(changeId: String) {
+        val change = findChangeByIdentifier(changeId)
+        val updatedChange = change.copy(
+            topic = null,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+    }
+
+    /**
+     * Set change as private.
+     */
+    @Transactional
+    fun setPrivate(changeId: String, input: PrivateInput): String {
+        val change = findChangeByIdentifier(changeId)
+        // Store privacy info in metadata for now
+        val updatedMetadata = change.metadata.toMutableMap()
+        updatedMetadata["is_private"] = true
+        val updatedChange = change.copy(
+            metadata = updatedMetadata,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+        return "OK"
+    }
+
+    /**
+     * Unset change as private.
+     */
+    @Transactional
+    fun unsetPrivate(changeId: String): String {
+        val change = findChangeByIdentifier(changeId)
+        // Store privacy info in metadata for now
+        val updatedMetadata = change.metadata.toMutableMap()
+        updatedMetadata["is_private"] = false
+        val updatedChange = change.copy(
+            metadata = updatedMetadata,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+        return "OK"
+    }
+
+    /**
+     * Set work in progress.
+     */
+    @Transactional
+    fun setWorkInProgress(changeId: String, input: WorkInProgressInput): String {
+        val change = findChangeByIdentifier(changeId)
+        // Store WIP info in metadata for now
+        val updatedMetadata = change.metadata.toMutableMap()
+        updatedMetadata["work_in_progress"] = true
+        val updatedChange = change.copy(
+            metadata = updatedMetadata,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+        return "OK"
+    }
+
+    /**
+     * Set ready for review.
+     */
+    @Transactional
+    fun setReadyForReview(changeId: String, input: ReadyForReviewInput): String {
+        val change = findChangeByIdentifier(changeId)
+        // Store WIP info in metadata for now
+        val updatedMetadata = change.metadata.toMutableMap()
+        updatedMetadata["work_in_progress"] = false
+        val updatedChange = change.copy(
+            metadata = updatedMetadata,
+            lastUpdatedOn = Instant.now()
+        )
+        changeRepository.save(updatedChange)
+        return "OK"
+    }
+
+    // Helper methods for REST API
+    
+    private fun findChangeByIdentifier(changeId: String): ChangeEntity {
+        return when {
+            changeId.matches(Regex("\\d+")) -> {
+                // Numeric ID
+                changeRepository.findById(changeId.toInt())
+                    .orElseThrow { NotFoundException("Change not found: $changeId") }
+            }
+            changeId.matches(CHANGE_ID_PATTERN.toRegex()) -> {
+                // Change-Id format
+                changeRepository.findByChangeKey(changeId)
+                    ?: throw NotFoundException("Change not found: $changeId")
+            }
+            changeId.contains("~") -> {
+                // project~branch~Change-Id format
+                val parts = changeId.split("~")
+                if (parts.size == 3) {
+                    changeRepository.findByProjectNameAndDestBranchAndChangeKey(parts[0], parts[1], parts[2])
+                        ?: throw NotFoundException("Change not found: $changeId")
+                } else {
+                    throw BadRequestException("Invalid change identifier format: $changeId")
+                }
+            }
+            else -> throw BadRequestException("Invalid change identifier format: $changeId")
+        }
+    }
+    
+    private fun convertToChangeInfo(change: ChangeEntity): ChangeInfo {
+        return ChangeInfo(
+            id = "${change.projectName}~${change.destBranch}~${change.changeKey}",
+            project = change.projectName,
+            branch = change.destBranch,
+            topic = change.topic,
+            changeId = change.changeKey,
+            subject = change.subject,
+            status = convertToApiStatus(change.status),
+            created = change.createdOn,
+            updated = change.lastUpdatedOn,
+            number = change.id.toLong(),
+            owner = AccountInfo(_account_id = change.ownerId.toLong()),
+            is_private = change.metadata["is_private"] as? Boolean ?: false,
+            work_in_progress = change.metadata["work_in_progress"] as? Boolean ?: false
+        )
+    }
+    
+    private fun convertToApiStatus(status: ChangeStatus): ai.fluxuate.gerrit.api.dto.ChangeStatus {
+        return when (status) {
+            ChangeStatus.NEW -> ai.fluxuate.gerrit.api.dto.ChangeStatus.NEW
+            ChangeStatus.MERGED -> ai.fluxuate.gerrit.api.dto.ChangeStatus.MERGED
+            ChangeStatus.ABANDONED -> ai.fluxuate.gerrit.api.dto.ChangeStatus.ABANDONED
+        }
+    }
+    
+    private fun convertToEntityStatus(status: ai.fluxuate.gerrit.api.dto.ChangeStatus): ChangeStatus {
+        return when (status) {
+            ai.fluxuate.gerrit.api.dto.ChangeStatus.NEW -> ChangeStatus.NEW
+            ai.fluxuate.gerrit.api.dto.ChangeStatus.MERGED -> ChangeStatus.MERGED
+            ai.fluxuate.gerrit.api.dto.ChangeStatus.ABANDONED -> ChangeStatus.ABANDONED
+        }
+    }
+    
+    private fun generateChangeId(): String {
+        // Generate a Change-Id in the format I + 40 hex characters
+        val chars = "0123456789abcdef"
+        val changeId = StringBuilder("I")
+        repeat(40) {
+            changeId.append(chars[Random.nextInt(chars.length)])
+        }
+        return changeId.toString()
+    }
+    
     data class ProcessResult(
         val success: Boolean,
         val message: String,
@@ -285,4 +713,13 @@ class ChangeService(
                 ProcessResult(false, message)
         }
     }
+    
+    data class ChangeDto(
+        val id: Int,
+        val changeKey: String,
+        val subject: String,
+        val status: ChangeStatus,
+        val createdOn: Instant,
+        val lastUpdatedOn: Instant
+    )
 }

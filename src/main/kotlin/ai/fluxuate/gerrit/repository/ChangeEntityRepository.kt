@@ -52,6 +52,15 @@ interface ChangeEntityRepository : JpaRepository<ChangeEntity, Int> {
     fun findByTopic(topic: String, pageable: Pageable): Page<ChangeEntity>
 
     /**
+     * Find change by project, branch, and change key (for project~branch~changeId format).
+     */
+    fun findByProjectNameAndDestBranchAndChangeKey(
+        projectName: String,
+        destBranch: String,
+        changeKey: String
+    ): ChangeEntity?
+
+    /**
      * Find changes that revert another change.
      */
     fun findByRevertOf(revertOf: Int): List<ChangeEntity>
