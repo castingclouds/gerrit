@@ -17,6 +17,17 @@ spring:
   flyway:
     enabled: false
 
+# Git configuration for tests
+gerrit:
+  git:
+    repository-base-path: ${java.io.tmpdir}/gerrit-test-repos
+    max-cached-repositories: 10
+    repository-cache-ttl-seconds: 60
+    httpEnabled: true
+    sshEnabled: true
+    anonymousReadEnabled: true
+    allowDirectPush: false
+
 logging:
   level:
     org.springframework.test: DEBUG

@@ -6,7 +6,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.test.context.TestPropertySource
+import org.springframework.test.context.ActiveProfiles
 import java.nio.file.Path
 import java.nio.file.Files
 import kotlin.io.path.exists
@@ -16,11 +16,7 @@ import kotlin.io.path.exists
  * Tests repository creation, cloning, management, and error handling.
  */
 @SpringBootTest
-@TestPropertySource(properties = [
-    "gerrit.git.repository-base-path=\${java.io.tmpdir}/gerrit-test-repos",
-    "gerrit.git.max-cached-repositories=10",
-    "gerrit.git.repository-cache-ttl-seconds=60"
-])
+@ActiveProfiles("test")
 class GitRepositoryServiceTest {
 
     @TempDir
