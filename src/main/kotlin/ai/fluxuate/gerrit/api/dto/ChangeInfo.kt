@@ -221,7 +221,6 @@ data class RevisionInfo(
     val ref: String,
     val fetch: Map<String, FetchInfo> = emptyMap(),
     val commit: CommitInfo? = null,
-    val files: Map<String, FileInfo> = emptyMap(),
     val actions: Map<String, ActionInfo> = emptyMap(),
     val reviewed: Boolean? = null,
     val commit_with_footers: Boolean? = null,
@@ -247,8 +246,7 @@ data class CommitInfo(
     val author: GitPersonInfo,
     val committer: GitPersonInfo,
     val subject: String,
-    val message: String,
-    val web_links: List<WebLinkInfo> = emptyList()
+    val message: String
 )
 
 /**
@@ -259,28 +257,6 @@ data class GitPersonInfo(
     val email: String,
     val date: Instant,
     val tz: Int
-)
-
-/**
- * Web link information.
- */
-data class WebLinkInfo(
-    val name: String,
-    val url: String,
-    val image_url: String? = null
-)
-
-/**
- * File information.
- */
-data class FileInfo(
-    val status: String? = null,
-    val binary: Boolean? = null,
-    val old_path: String? = null,
-    val lines_inserted: Int? = null,
-    val lines_deleted: Int? = null,
-    val size_delta: Long? = null,
-    val size: Long? = null
 )
 
 /**
