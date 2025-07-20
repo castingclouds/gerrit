@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.BadRequestException
 import ai.fluxuate.gerrit.api.exception.ConflictException
 import ai.fluxuate.gerrit.api.exception.NotFoundException
+import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.model.ProjectEntity
 import ai.fluxuate.gerrit.model.ProjectState
 import ai.fluxuate.gerrit.repository.ProjectEntityRepository
@@ -18,7 +19,8 @@ import org.springframework.transaction.annotation.Transactional
 @Service
 @Transactional
 class ProjectService(
-    private val projectRepository: ProjectEntityRepository
+    private val projectRepository: ProjectEntityRepository,
+    private val gitRepositoryService: GitRepositoryService
 ) {
 
     // REST API methods
@@ -92,8 +94,18 @@ class ProjectService(
         
         val savedProject = projectRepository.save(projectEntity)
         
-        // TODO: Initialize Git repository
-        // TODO: Create initial branches if specified
+        // Initialize Git repository
+        try {
+            gitRepositoryService.createRepository(projectName, bare = true)
+            
+            // Create initial branches if specified
+            val initialBranches = input.branches?.takeIf { it.isNotEmpty() } ?: listOf("main")
+            gitRepositoryService.createInitialBranches(projectName, initialBranches, initialCommit = input.createEmptyCommit != false)
+        } catch (e: Exception) {
+            // If Git repository creation fails, clean up the database entry
+            projectRepository.delete(savedProject)
+            throw ConflictException("Failed to initialize Git repository for project '$projectName': ${e.message}")
+        }
         
         return convertToProjectInfo(savedProject, includeDescription = true, includeTree = false, branches = null)
     }
@@ -129,8 +141,17 @@ class ProjectService(
             throw ConflictException("Cannot delete project with child projects. Use force=true to override.")
         }
         
-        // TODO: Delete Git repository
-        // TODO: Clean up references
+        // Delete Git repository and clean up references
+        try {
+            if (gitRepositoryService.repositoryExists(projectName)) {
+                gitRepositoryService.cleanupReferences(projectName)
+                gitRepositoryService.deleteRepository(projectName)
+            }
+        } catch (e: Exception) {
+            // Log the error but don't fail the project deletion
+            // The database cleanup should still proceed
+            println("Warning: Failed to delete Git repository for project '$projectName': ${e.message}")
+        }
         
         projectRepository.delete(project)
     }
@@ -210,8 +231,19 @@ class ProjectService(
      */
     fun getHead(projectName: String): String {
         val project = findProjectByName(projectName)
-        // TODO: Get actual HEAD from Git repository
-        return project.config["head"] as? String ?: "refs/heads/main"
+        
+        // Get actual HEAD from Git repository
+        return try {
+            if (gitRepositoryService.repositoryExists(projectName)) {
+                gitRepositoryService.getHead(projectName)
+            } else {
+                // Fallback to config if Git repository doesn't exist
+                project.config["head"] as? String ?: "refs/heads/main"
+            }
+        } catch (e: Exception) {
+            // Fallback to config if Git operation fails
+            project.config["head"] as? String ?: "refs/heads/main"
+        }
     }
 
     /**
@@ -221,9 +253,22 @@ class ProjectService(
     fun setHead(projectName: String, input: HeadInput): String {
         val project = findProjectByName(projectName)
         
-        // TODO: Validate ref exists in Git repository
-        // TODO: Update Git repository HEAD
+        // Validate ref exists in Git repository
+        if (gitRepositoryService.repositoryExists(projectName)) {
+            if (!gitRepositoryService.validateRef(projectName, input.ref)) {
+                throw BadRequestException("Reference '${input.ref}' does not exist in repository")
+            }
+        }
         
+        // Update Git repository HEAD
+        try {
+            gitRepositoryService.setHead(projectName, input.ref)
+        } catch (e: Exception) {
+            // Log the error but don't fail the HEAD update
+            println("Warning: Failed to update Git repository HEAD for project '$projectName': ${e.message}")
+        }
+        
+        // Update project config
         val updatedConfig = project.config.toMutableMap()
         updatedConfig["head"] = input.ref
         
@@ -246,20 +291,48 @@ class ProjectService(
         includeTree: Boolean,
         branches: List<String>?
     ): ProjectInfo {
-        return ProjectInfo(
-            id = entity.name,
-            name = entity.name,
-            parent = entity.parentName,
-            description = if (includeDescription) entity.description else null,
-            state = convertToApiProjectState(entity.state),
-            branches = if (branches != null) {
-                // TODO: Get actual branches from Git repository
-                branches.associateWith { "refs/heads/$it" }
-            } else null,
-            labels = convertLabelsFromMetadata(entity.metadata),
-            webLinks = convertWebLinksFromMetadata(entity.metadata),
-            configVisible = true // TODO: Check permissions
-        )
+        return try {
+            ProjectInfo(
+                id = entity.name,
+                name = entity.name,
+                parent = entity.parentName,
+                description = if (includeDescription) entity.description else null,
+                state = convertToApiProjectState(entity.state),
+                branches = if (branches != null) {
+                    // Get actual branches from Git repository
+                    try {
+                        if (gitRepositoryService.repositoryExists(entity.name)) {
+                            gitRepositoryService.listBranches(entity.name).associateWith { branchName ->
+                                "refs/heads/$branchName" // Return the full ref name as String
+                            }
+                        } else {
+                            emptyMap()
+                        }
+                    } catch (e: Exception) {
+                        // Fallback to empty branches if Git operation fails
+                        println("Warning: Failed to list branches for project '${entity.name}': ${e.message}")
+                        emptyMap()
+                    }
+                } else null,
+                labels = try {
+                    convertLabelsFromMetadata(entity.metadata)
+                } catch (e: Exception) {
+                    println("Warning: Failed to convert labels for project '${entity.name}': ${e.message}")
+                    null
+                },
+                webLinks = try {
+                    convertWebLinksFromMetadata(entity.metadata)
+                } catch (e: Exception) {
+                    println("Warning: Failed to convert web links for project '${entity.name}': ${e.message}")
+                    null
+                },
+                configVisible = true // For now, always visible - TODO: Implement proper permission checks based on user context
+            )
+        } catch (e: Exception) {
+            println("Error: Failed to convert ProjectEntity to ProjectInfo for '${entity.name}': ${e.message}")
+            e.printStackTrace()
+            throw e
+        }
     }
 
     private fun convertToApiProjectState(state: ProjectState): ai.fluxuate.gerrit.api.dto.ProjectState {
@@ -332,13 +405,44 @@ class ProjectService(
     }
 
     private fun convertLabelsFromMetadata(metadata: Map<String, Any>): Map<String, LabelTypeInfo>? {
-        // TODO: Convert labels from metadata JSONB
-        return null
+        val labelsData = metadata["labels"] as? Map<String, Any> ?: return null
+        
+        return labelsData.mapValues { (_, labelData) ->
+            val labelMap = labelData as? Map<String, Any> ?: return@mapValues LabelTypeInfo(
+                values = emptyMap(),
+                defaultValue = 0
+            )
+            
+            LabelTypeInfo(
+                values = (labelMap["values"] as? Map<String, String>) ?: emptyMap(),
+                defaultValue = (labelMap["defaultValue"] as? Int) ?: 0,
+                function = labelMap["function"] as? String,
+                copyMinScore = labelMap["copyMinScore"] as? Boolean,
+                copyMaxScore = labelMap["copyMaxScore"] as? Boolean,
+                copyAllScoresIfNoChange = labelMap["copyAllScoresIfNoChange"] as? Boolean,
+                copyAllScoresIfNoCodeChange = labelMap["copyAllScoresIfNoCodeChange"] as? Boolean,
+                copyAllScoresOnTrivialRebase = labelMap["copyAllScoresOnTrivialRebase"] as? Boolean,
+                copyAllScoresOnMergeFirstParentUpdate = labelMap["copyAllScoresOnMergeFirstParentUpdate"] as? Boolean,
+                copyCondition = labelMap["copyCondition"] as? String,
+                allowPostSubmit = labelMap["allowPostSubmit"] as? Boolean,
+                ignoreSelfApproval = labelMap["ignoreSelfApproval"] as? Boolean
+            )
+        }
     }
 
     private fun convertWebLinksFromMetadata(metadata: Map<String, Any>): List<WebLinkInfo>? {
-        // TODO: Convert web links from metadata JSONB
-        return null
+        val webLinksData = metadata["webLinks"] as? List<Map<String, Any>> ?: return null
+        
+        return webLinksData.mapNotNull { linkData ->
+            val name = linkData["name"] as? String ?: return@mapNotNull null
+            val url = linkData["url"] as? String ?: return@mapNotNull null
+            
+            WebLinkInfo(
+                name = name,
+                url = url,
+                imageUrl = linkData["imageUrl"] as? String
+            )
+        }
     }
 
     private fun wouldCreateCircularDependency(projectName: String, parentName: String): Boolean {

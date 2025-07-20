@@ -9,7 +9,7 @@ import java.time.Instant
  * Project information DTO matching legacy Gerrit API structure.
  */
 data class ProjectInfo @JsonCreator constructor(
-    @JsonProperty("id") val id: String,
+    @JsonProperty("id") val id: String? = null,
     @JsonProperty("name") val name: String,
     @JsonProperty("parent") val parent: String? = null,
     @JsonProperty("description") val description: String? = null,
