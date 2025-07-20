@@ -5,6 +5,7 @@ import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
 import ai.fluxuate.gerrit.config.TestSecurityConfig
+import ai.fluxuate.gerrit.service.AccountService
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.junit.jupiter.api.Assertions.*
@@ -40,8 +41,12 @@ class CommentsControllerIntegrationTest {
     @Autowired
     private lateinit var objectMapper: ObjectMapper
 
+    @Autowired
+    private lateinit var accountService: AccountService
+
     private lateinit var baseUrl: String
     private lateinit var testChange: ChangeEntity
+    private var testAccountId: Long = 0L
 
     @BeforeEach
     fun setUp() {
@@ -50,11 +55,23 @@ class CommentsControllerIntegrationTest {
         // Clean up any existing test data
         changeRepository.deleteAll()
         
+        // Create a test user account for the authenticated user
+        val testUser = try {
+            accountService.createAccount("testuser", AccountInput(
+                name = "Test User",
+                email = "testuser@example.com"
+            ))
+        } catch (e: Exception) {
+            // User might already exist, get the existing one
+            accountService.getAccount("testuser")
+        }
+        testAccountId = testUser._account_id
+        
         // Create a test change with all required parameters
         testChange = changeRepository.save(
             ChangeEntity(
                 changeKey = "I1234567890123456789012345678901234567890",
-                ownerId = 1,
+                ownerId = testAccountId.toInt(), // Use real account ID
                 projectName = "test-project",
                 destBranch = "main",
                 subject = "Test change for comments",
@@ -66,8 +83,8 @@ class CommentsControllerIntegrationTest {
                     mapOf(
                         "number" to 1,
                         "revision" to "abc123",
-                        "ref" to "refs/changes/01/${1}/1",
-                        "uploader" to mapOf("_account_id" to 1),
+                        "ref" to "refs/changes/01/${testAccountId.toInt()}/1",
+                        "uploader" to mapOf("_account_id" to testAccountId.toInt()),
                         "created" to Instant.now().toString(),
                         "kind" to "REWORK",
                         "description" to "Initial patch set"
@@ -79,6 +96,9 @@ class CommentsControllerIntegrationTest {
                 )
             )
         )
+        
+        // Configure TestRestTemplate with Basic Auth
+        restTemplate = restTemplate.withBasicAuth("testuser", "password")
     }
 
     @Test

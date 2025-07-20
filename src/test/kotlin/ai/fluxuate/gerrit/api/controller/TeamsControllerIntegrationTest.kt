@@ -1,11 +1,16 @@
 package ai.fluxuate.gerrit.api.controller
 
-import ai.fluxuate.gerrit.api.dto.*
+import ai.fluxuate.gerrit.api.dto.AccountInput
+import ai.fluxuate.gerrit.api.dto.TeamInfo
+import ai.fluxuate.gerrit.api.dto.TeamInput
+import ai.fluxuate.gerrit.api.dto.MembersInput
+import ai.fluxuate.gerrit.api.dto.AccountInfo
 import ai.fluxuate.gerrit.config.TestSecurityConfig
 import ai.fluxuate.gerrit.model.TeamEntity
 import ai.fluxuate.gerrit.model.UserEntity
 import ai.fluxuate.gerrit.repository.TeamRepository
 import ai.fluxuate.gerrit.repository.UserEntityRepository
+import ai.fluxuate.gerrit.service.AccountService
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.*
 import org.springframework.beans.factory.annotation.Autowired
@@ -39,16 +44,34 @@ class TeamsControllerIntegrationTest {
     @Autowired
     private lateinit var userRepository: UserEntityRepository
 
+    @Autowired
+    private lateinit var accountService: AccountService
+
     private lateinit var baseUrl: String
     private lateinit var testUser1: UserEntity
     private lateinit var testUser2: UserEntity
     private lateinit var testTeam: TeamEntity
+    private var testAccountId: Long = 0
 
     @BeforeEach
     fun setUp() {
         baseUrl = "http://localhost:$port/a/teams"
         
-        // Create test users
+        // Clean up any existing test data
+        teamRepository.deleteAll()
+        userRepository.deleteAll()
+        
+        // Create test user with dynamic account creation for authentication
+        val accountInfo = accountService.createAccount("testuser", AccountInput(
+            name = "Test User",
+            email = "test@example.com"
+        ))
+        testAccountId = accountInfo._account_id
+        
+        // Configure TestRestTemplate with Basic Auth
+        restTemplate = restTemplate.withBasicAuth("testuser", "password")
+        
+        // Create test users for team operations
         testUser1 = UserEntity(
             username = "testuser1",
             fullName = "Test User 1",

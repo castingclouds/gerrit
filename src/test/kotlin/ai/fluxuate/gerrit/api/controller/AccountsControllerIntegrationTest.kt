@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.config.TestSecurityConfig
 import ai.fluxuate.gerrit.model.UserEntity
 import ai.fluxuate.gerrit.repository.AccountRepository
+import ai.fluxuate.gerrit.service.AccountService
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.junit.jupiter.api.AfterEach
@@ -41,9 +42,13 @@ class AccountsControllerIntegrationTest {
     private lateinit var accountRepository: AccountRepository
 
     @Autowired
+    private lateinit var accountService: AccountService
+
+    @Autowired
     private lateinit var objectMapper: ObjectMapper
 
     private lateinit var testUser: UserEntity
+    private var testAccountId: Long = 0
     private val baseUrl get() = "http://localhost:$port/a/accounts"
 
     @BeforeEach
@@ -51,13 +56,22 @@ class AccountsControllerIntegrationTest {
         // Clean up any existing test data
         accountRepository.deleteAll()
         
-        // Create test user
-        testUser = UserEntity(
+        // Create test user with dynamic account creation
+        val accountInfo = accountService.createAccount("testuser", AccountInput(
+            name = "Test User",
+            email = "test@example.com"
+        ))
+        testAccountId = accountInfo._account_id
+        
+        // Delete the basic user and create a complete one with test data
+        accountRepository.deleteById(testAccountId.toInt())
+        
+        // Create user with complete test data that the failing tests expect
+        val completeUser = UserEntity(
+            id = testAccountId.toInt(),
             username = "testuser",
             fullName = "Test User",
             preferredEmail = "test@example.com",
-            active = true,
-            registeredOn = Instant.now(),
             preferences = mapOf(
                 "changesPerPage" to 25,
                 "theme" to "dark",
@@ -79,7 +93,10 @@ class AccountsControllerIntegrationTest {
                 )
             )
         )
-        testUser = accountRepository.save(testUser)
+        testUser = accountRepository.save(completeUser)
+        
+        // Configure TestRestTemplate with Basic Auth
+        restTemplate = restTemplate.withBasicAuth("testuser", "password")
     }
 
     @AfterEach
