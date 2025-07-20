@@ -5,6 +5,7 @@ import ai.fluxuate.gerrit.config.TestSecurityConfig
 import ai.fluxuate.gerrit.model.ProjectEntity
 import ai.fluxuate.gerrit.model.ProjectState
 import ai.fluxuate.gerrit.repository.ProjectEntityRepository
+import ai.fluxuate.gerrit.service.AccountService
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -38,7 +39,12 @@ class ProjectsControllerIntegrationTest {
     private lateinit var projectRepository: ProjectEntityRepository
 
     @Autowired
+    private lateinit var accountService: AccountService
+
+    @Autowired
     private lateinit var objectMapper: ObjectMapper
+
+    private var testAccountId: Long = 0
 
     private fun baseUrl() = "http://localhost:$port/a/projects"
 
@@ -46,6 +52,16 @@ class ProjectsControllerIntegrationTest {
     fun setUp() {
         // Clean up any existing test data
         projectRepository.deleteAll()
+        
+        // Create test user with dynamic account creation for authentication
+        val accountInfo = accountService.createAccount("testuser", AccountInput(
+            name = "Test User",
+            email = "test@example.com"
+        ))
+        testAccountId = accountInfo._account_id
+        
+        // Configure TestRestTemplate with Basic Auth
+        restTemplate = restTemplate.withBasicAuth("testuser", "password")
     }
 
     @AfterEach
