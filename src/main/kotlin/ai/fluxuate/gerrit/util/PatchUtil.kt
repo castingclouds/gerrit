@@ -3,13 +3,20 @@ package ai.fluxuate.gerrit.util
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.NotFoundException
+import ai.fluxuate.gerrit.config.ServerConfiguration
+import org.springframework.context.ApplicationContext
+import org.springframework.context.ApplicationContextAware
+import org.springframework.stereotype.Component
 import java.time.Instant
 
 /**
  * Utility class for handling patch set and revision operations.
  * Contains logic for finding, converting, and managing patch sets and revisions.
  */
-object PatchUtil {
+@Component
+class PatchUtil(
+    private val serverConfiguration: ServerConfiguration
+) {
 
     /**
      * Find a patch set by revision ID.
@@ -67,7 +74,7 @@ object PatchUtil {
             ref = "refs/changes/${change.id.toString().takeLast(2).padStart(2, '0')}/${change.id}/${change.patchSets.indexOf(patchSet) + 1}",
             fetch = mapOf(
                 "http" to FetchInfo(
-                    url = "http://localhost:8080/${change.projectName}",
+                    url = serverConfiguration.getProjectUrl(change.projectName),
                     ref = "refs/changes/${change.id.toString().takeLast(2).padStart(2, '0')}/${change.id}/${change.patchSets.indexOf(patchSet) + 1}"
                 )
             ),
