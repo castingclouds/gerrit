@@ -1,7 +1,9 @@
 package ai.fluxuate.gerrit.service
 
 import ai.fluxuate.gerrit.util.ChangeIdUtil
+import ai.fluxuate.gerrit.util.GitUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
+import ai.fluxuate.gerrit.util.ReviewerUtil
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
@@ -27,7 +29,8 @@ import kotlin.random.Random
 @Service
 class ChangeService(
     private val changeRepository: ChangeEntityRepository,
-    private val accountService: AccountService
+    private val accountService: AccountService,
+    private val rebaseUtil: RebaseUtil
 ) {
     
     private val logger = LoggerFactory.getLogger(ChangeService::class.java)
@@ -464,7 +467,7 @@ class ChangeService(
     @Transactional
     fun submitChange(changeId: String, input: SubmitInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        val updatedChange = RebaseUtil.performSubmit(change)
+        val updatedChange = rebaseUtil.performSubmit(change)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -475,7 +478,7 @@ class ChangeService(
     @Transactional
     fun rebaseChange(changeId: String, input: RebaseInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        val updatedChange = RebaseUtil.performRebase(change)
+        val updatedChange = rebaseUtil.performRebase(change)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -1006,7 +1009,7 @@ class ChangeService(
     @Transactional
     fun submitRevision(changeId: String, revisionId: String, input: SubmitInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        val updatedChange = RebaseUtil.performRevisionSubmit(change, revisionId)
+        val updatedChange = rebaseUtil.performRevisionSubmit(change, revisionId)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -1031,7 +1034,7 @@ class ChangeService(
     @Transactional
     fun rebaseRevision(changeId: String, revisionId: String, input: RebaseInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        val updatedChange = RebaseUtil.performRevisionRebase(change, revisionId)
+        val updatedChange = rebaseUtil.performRevisionRebase(change, revisionId)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -1221,29 +1224,8 @@ class ChangeService(
         zip: Boolean = false
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-
-        // TODO: Implement actual patch generation
-        // For now, return placeholder patch
-        val revision = patchSet["revision"] as? String ?: revisionId
-        val patchCommitId = "${revision}def456" // Use revision + def456 to match test expectations
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val uploaderName = uploaderMap["name"] as? String ?: "Unknown"
-        val uploaderEmail = uploaderMap["email"] as? String ?: "unknown@example.com"
-        val createdOn = patchSet["createdOn"] as? String ?: "unknown"
-        
-        return """
-            |From $patchCommitId Mon Sep 17 00:00:00 2001
-            |From: $uploaderName <$uploaderEmail>
-            |Date: $createdOn
-            |Subject: [PATCH] ${change.subject}
-            |
-            |TODO: Implement actual patch generation for revision $revisionId
-            |
-            |Change-Id: ${change.changeKey}
-            |---
-        """.trimMargin()
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        return GitUtil.generateRevisionPatch(change, patchSet, revisionId, zip)
     }
 
     // ===== COMMENT SERVICE METHODS =====
@@ -1575,58 +1557,22 @@ class ChangeService(
         query: String? = null
     ): Map<String, FileInfo> {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-
-        // Validate mutually exclusive options
-        val optionCount = listOfNotNull(base, parent, reviewed, query).size
-        if (optionCount > 1) {
-            throw BadRequestException("Cannot combine base, parent, reviewed, query options")
-        }
-
-        // TODO: Implement actual Git file listing logic
-        // For now, return placeholder data based on the revision
-        return when {
-            reviewed == true -> {
-                // Return reviewed files (placeholder)
-                emptyMap()
-            }
-            query != null -> {
-                // Return files matching query (placeholder)
-                emptyMap()
-            }
-            base != null -> {
-                // Return files compared to base revision
-                getFilesComparedToBase(change, patchSet, base)
-            }
-            parent != null -> {
-                // Return files compared to parent
-                getFilesComparedToParent(change, patchSet, parent)
-            }
-            else -> {
-                // Return all files in revision
-                getAllFilesInRevision(change, patchSet)
-            }
-        }
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        return GitUtil.listRevisionFiles(change, patchSet, base, parent, reviewed, query)
     }
 
     /**
-     * Get file content.
+     * Get content of a file in a revision.
      */
     fun getFileContent(
         changeId: String,
         revisionId: String,
-        filePath: String,
+        fileId: String,
         parent: Int? = null
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-
-        // TODO: Implement actual Git file content retrieval
-        // For now, return placeholder content that matches test expectations
-        val parentInfo = if (parent != null) "Parent: $parent\n" else ""
-        return "${parentInfo}// TODO: Implement file content retrieval for $filePath\n// Change: $changeId\n// Revision: $revisionId"
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        return GitUtil.getFileContent(change, patchSet, fileId)
     }
 
     /**
@@ -1635,7 +1581,7 @@ class ChangeService(
     fun getFileDiff(
         changeId: String,
         revisionId: String,
-        filePath: String,
+        fileId: String,
         base: String? = null,
         parent: Int? = null,
         context: Int? = null,
@@ -1643,67 +1589,21 @@ class ChangeService(
         whitespace: String? = null
     ): DiffInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-
-        // TODO: Implement actual Git diff logic
-        // For now, return placeholder diff data
-        val commitId = patchSet["commitId"] as? String ?: "unknown"
-        return DiffInfo(
-            metaA = FileMeta(
-                commitId = commitId,
-                name = filePath,
-                contentType = "text/plain",
-                lines = 10
-            ),
-            metaB = FileMeta(
-                commitId = commitId,
-                name = filePath,
-                contentType = "text/plain",
-                lines = 12
-            ),
-            changeType = ChangeType.MODIFIED,
-            content = listOf(
-                ContentEntry(
-                    ab = listOf("// Common line 1", "// Common line 2"),
-                    a = listOf("// Old line"),
-                    b = listOf("// New line", "// Added line")
-                )
-            ),
-            binary = false
-        )
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        return GitUtil.getFileDiff(change, patchSet, fileId, base, parent, context, intraline, whitespace)
     }
 
     // ===== HELPER METHODS FOR FILES =====
 
     private fun getAllFilesInRevision(change: ChangeEntity, patchSet: Map<String, Any>): Map<String, FileInfo> {
-        // TODO: Implement actual Git file listing
-        // For now, return placeholder files
-        return mapOf(
-            "src/main/kotlin/Example.kt" to FileInfo(
-                status = 'M',
-                linesInserted = 5,
-                linesDeleted = 2,
-                sizeDelta = 150,
-                size = 1024
-            ),
-            "README.md" to FileInfo(
-                status = 'A',
-                linesInserted = 10,
-                linesDeleted = 0,
-                sizeDelta = 500,
-                size = 500
-            )
-        )
+        return GitUtil.getAllFilesInRevision(change, patchSet)
     }
 
     private fun getFilesComparedToBase(change: ChangeEntity, patchSet: Map<String, Any>, base: String): Map<String, FileInfo> {
-        // TODO: Implement base comparison logic
-        return getAllFilesInRevision(change, patchSet)
+        return GitUtil.getFilesComparedToBase(change, patchSet, base)
     }
 
     private fun getFilesComparedToParent(change: ChangeEntity, patchSet: Map<String, Any>, parent: Int): Map<String, FileInfo> {
-        // TODO: Implement parent comparison logic
-        return getAllFilesInRevision(change, patchSet)
+        return GitUtil.getFilesComparedToParent(change, patchSet, parent)
     }
 }
