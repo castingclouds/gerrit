@@ -2,6 +2,7 @@ package ai.fluxuate.gerrit.service
 
 import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.util.GitUtil
+import ai.fluxuate.gerrit.util.PatchUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
 import ai.fluxuate.gerrit.util.ReviewerUtil
 import ai.fluxuate.gerrit.model.ChangeEntity
@@ -977,15 +978,7 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevisions(changeId: String): Map<String, RevisionInfo> {
         val change = findChangeByIdentifier(changeId)
-        
-        // Extract patch sets from JSONB array
-        val patchSets = change.patchSets
-        
-        return patchSets.mapIndexed { index, patchSetMap ->
-            val revisionId = patchSetMap["revision"] as? String ?: "revision-${index + 1}"
-            val revisionInfo = convertPatchSetToRevisionInfo(patchSetMap, change)
-            revisionId to revisionInfo
-        }.toMap()
+        return PatchUtil.convertPatchSetsToRevisionInfoMap(change)
     }
 
     /**
@@ -994,13 +987,8 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevision(changeId: String, revisionId: String): RevisionInfo {
         val change = findChangeByIdentifier(changeId)
-        
-        // Find the specific patch set
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-        
-        val patchSetNumber = change.patchSets.indexOf(patchSet) + 1
-        return convertPatchSetToRevisionInfo(patchSet, change)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        return PatchUtil.convertPatchSetToRevisionInfo(patchSet, change)
     }
 
     /**
@@ -1020,12 +1008,9 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevisionCommit(changeId: String, revisionId: String): CommitInfo {
         val change = findChangeByIdentifier(changeId)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
         
-        // Find the specific patch set
-        val patchSet = findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-        
-        return convertPatchSetToCommitInfo(patchSet, change)
+        return PatchUtil.convertPatchSetToCommitInfo(patchSet, change)
     }
 
     /**
@@ -1224,7 +1209,7 @@ class ChangeService(
         zip: Boolean = false
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.generateRevisionPatch(change, patchSet, revisionId, zip)
     }
 
@@ -1557,7 +1542,7 @@ class ChangeService(
         query: String? = null
     ): Map<String, FileInfo> {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.listRevisionFiles(change, patchSet, base, parent, reviewed, query)
     }
 
@@ -1571,7 +1556,7 @@ class ChangeService(
         parent: Int? = null
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.getFileContent(change, patchSet, fileId)
     }
 
@@ -1589,7 +1574,7 @@ class ChangeService(
         whitespace: String? = null
     ): DiffInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
+        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.getFileDiff(change, patchSet, fileId, base, parent, context, intraline, whitespace)
     }
 
