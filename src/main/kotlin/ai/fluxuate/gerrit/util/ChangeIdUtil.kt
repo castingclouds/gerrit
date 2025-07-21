@@ -1,34 +1,33 @@
-package ai.fluxuate.gerrit.service
+package ai.fluxuate.gerrit.util
 
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.PersonIdent
-import org.springframework.stereotype.Service
 import java.security.MessageDigest
 import java.util.regex.Pattern
 
 /**
- * Service for Change-Id generation and validation.
+ * Utility object for Change-Id generation and validation.
  * Implements the same algorithm as Gerrit's commit-msg hook.
+ * 
+ * Based on the official Gerrit project patterns, this utility provides
+ * static methods for Change-Id operations without requiring dependency injection.
  */
-@Service
-class ChangeIdService {
+object ChangeIdUtil {
     
-    companion object {
-        // Change-Id pattern: I followed by 40 hex characters
-        private val CHANGE_ID_PATTERN = Pattern.compile("^I[0-9a-f]{40}$")
-        
-        // Pattern to find Change-Id footer in commit message
-        private val CHANGE_ID_FOOTER_PATTERN = Pattern.compile(
-            "^Change-Id:\\s*(I[0-9a-f]{40})\\s*$", 
-            Pattern.MULTILINE
-        )
-        
-        // Pattern to find any Change-Id line (for replacement)
-        private val CHANGE_ID_LINE_PATTERN = Pattern.compile(
-            "^Change-Id:\\s*.*$", 
-            Pattern.MULTILINE
-        )
-    }
+    // Change-Id pattern: I followed by 40 hex characters
+    private val CHANGE_ID_PATTERN = Pattern.compile("^I[0-9a-f]{40}$")
+    
+    // Pattern to find Change-Id footer in commit message
+    private val CHANGE_ID_FOOTER_PATTERN = Pattern.compile(
+        "^Change-Id:\\s*(I[0-9a-f]{40})\\s*$", 
+        Pattern.MULTILINE
+    )
+    
+    // Pattern to find any Change-Id line (for replacement)
+    private val CHANGE_ID_LINE_PATTERN = Pattern.compile(
+        "^Change-Id:\\s*.*$", 
+        Pattern.MULTILINE
+    )
     
     /**
      * Generate a Change-Id using the same algorithm as Gerrit's commit-msg hook.
@@ -128,7 +127,7 @@ class ChangeIdService {
     /**
      * Add Change-Id footer to commit message.
      */
-    private fun addChangeIdToMessage(commitMessage: String, changeId: String): String {
+    fun addChangeIdToMessage(commitMessage: String, changeId: String): String {
         val lines = commitMessage.split("\n").toMutableList()
         
         // Find the position to insert Change-Id (before any existing footers)
@@ -156,7 +155,7 @@ class ChangeIdService {
     /**
      * Remove existing Change-Id from commit message.
      */
-    private fun removeChangeId(commitMessage: String): String {
+    fun removeChangeId(commitMessage: String): String {
         return CHANGE_ID_LINE_PATTERN.matcher(commitMessage).replaceAll("")
     }
     

@@ -3,7 +3,7 @@ package ai.fluxuate.gerrit.git.ssh
 import ai.fluxuate.gerrit.git.GitConfiguration
 import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.service.ChangeService
-import ai.fluxuate.gerrit.service.ChangeIdService
+
 import org.apache.sshd.server.channel.ChannelSession
 import org.apache.sshd.server.command.Command
 import org.apache.sshd.server.command.CommandFactory
@@ -18,8 +18,7 @@ import org.springframework.stereotype.Component
 class GitSshCommandFactory(
     private val gitConfiguration: GitConfiguration,
     private val repositoryService: GitRepositoryService,
-    private val changeService: ChangeService,
-    private val changeIdService: ChangeIdService
+    private val changeService: ChangeService
 ) : CommandFactory {
     
     private val logger = LoggerFactory.getLogger(GitSshCommandFactory::class.java)
@@ -30,11 +29,11 @@ class GitSshCommandFactory(
         return when {
             command.startsWith("git-receive-pack") -> {
                 logger.info("Creating git-receive-pack command")
-                GitSshReceivePackCommand(gitConfiguration, repositoryService, changeService, changeIdService)
+                GitSshReceivePackCommand(gitConfiguration, repositoryService, changeService)
             }
             command.startsWith("git-upload-pack") -> {
                 logger.info("Creating git-upload-pack command")
-                GitSshUploadPackCommand(gitConfiguration, repositoryService, changeService, changeIdService)
+                GitSshUploadPackCommand(gitConfiguration, repositoryService, changeService)
             }
             else -> {
                 logger.warn("Unknown command: $command")

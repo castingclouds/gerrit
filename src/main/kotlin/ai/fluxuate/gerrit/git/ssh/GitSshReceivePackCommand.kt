@@ -2,7 +2,7 @@ package ai.fluxuate.gerrit.git.ssh
 
 import ai.fluxuate.gerrit.git.GitConfiguration
 import ai.fluxuate.gerrit.git.GitRepositoryService
-import ai.fluxuate.gerrit.service.ChangeIdService
+import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.service.ChangeService
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.Repository
@@ -16,8 +16,7 @@ import org.springframework.stereotype.Component
 class GitSshReceivePackCommand(
     gitConfiguration: GitConfiguration,
     repositoryService: GitRepositoryService,
-    private val changeService: ChangeService,
-    private val changeIdService: ChangeIdService
+    private val changeService: ChangeService
 ) : AbstractGitSshCommand(gitConfiguration, repositoryService) {
 
     override fun runImpl() {
@@ -86,10 +85,14 @@ class GitSshReceivePackCommand(
                 val commit = repo.parseCommit(command.newId)
                 
                 // Extract Change-Id from commit message
-                var changeId = changeIdService.extractChangeId(commit.fullMessage)
+                var changeId = ChangeIdUtil.extractChangeId(commit.fullMessage)
+                
+                if (changeId != null && !ChangeIdUtil.isValidChangeId(changeId)) {
+                    changeId = null
+                }
                 
                 if (changeId == null) {
-                    val generatedChangeId = changeIdService.generateChangeId(
+                    val generatedChangeId = ChangeIdUtil.generateChangeId(
                         treeId = commit.tree.id,
                         parentIds = commit.parents.map { it.id },
                         author = commit.authorIdent,
@@ -238,7 +241,7 @@ class GitSshReceivePackCommand(
         private fun processMagicBranchPostReceive(command: ReceiveCommand, repo: Repository) {
             try {
                 val commit = repo.parseCommit(command.newId)
-                val changeId = changeIdService.extractChangeId(commit.fullMessage)
+                val changeId = ChangeIdUtil.extractChangeId(commit.fullMessage)
                 
                 if (changeId != null) {
                     // Send notifications to reviewers

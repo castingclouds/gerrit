@@ -2,7 +2,7 @@ package ai.fluxuate.gerrit.git.ssh
 
 import ai.fluxuate.gerrit.git.GitConfiguration
 import ai.fluxuate.gerrit.git.GitRepositoryService
-import ai.fluxuate.gerrit.service.ChangeIdService
+import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.service.ChangeService
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.Repository
@@ -18,8 +18,7 @@ import org.slf4j.LoggerFactory
 class GitSshUploadPackCommand(
     gitConfiguration: GitConfiguration,
     repositoryService: GitRepositoryService,
-    private val changeService: ChangeService,
-    private val changeIdService: ChangeIdService
+    private val changeService: ChangeService
 ) : AbstractGitSshCommand(gitConfiguration, repositoryService) {
 
     override fun runImpl() {

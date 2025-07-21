@@ -1,7 +1,8 @@
 package ai.fluxuate.gerrit.git
 
 import ai.fluxuate.gerrit.service.ChangeService
-import ai.fluxuate.gerrit.service.ChangeIdService
+import ai.fluxuate.gerrit.util.ChangeIdUtil
+
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.transport.ReceivePack
 import org.eclipse.jgit.transport.UploadPack
@@ -22,9 +23,8 @@ import java.io.IOException
 @RestController
 @RequestMapping("/git")
 class GitHttpController(
-    private val gitRepositoryService: GitRepositoryService,
-    private val gitConfig: GitConfiguration,
-    private val changeIdService: ChangeIdService,
+    private val gitConfiguration: GitConfiguration,
+    private val repositoryService: GitRepositoryService,
     private val changeService: ChangeService
 ) {
 
@@ -46,7 +46,7 @@ class GitHttpController(
         }
         
         return try {
-            val repository = gitRepositoryService.openRepository(projectName)
+            val repository = repositoryService.getRepository(projectName)
             
             when (service) {
                 "git-upload-pack" -> handleUploadPackInfoRefs(repository)
@@ -78,7 +78,7 @@ class GitHttpController(
         }
         
         return try {
-            val repository = gitRepositoryService.openRepository(projectName)
+            val repository = repositoryService.getRepository(projectName)
             
             ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/x-git-upload-pack-result"))
@@ -112,7 +112,7 @@ class GitHttpController(
         }
         
         return try {
-            val repository = gitRepositoryService.openRepository(projectName)
+            val repository = repositoryService.getRepository(projectName)
             
             ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/x-git-receive-pack-result"))
@@ -135,9 +135,9 @@ class GitHttpController(
     }
 
     private fun configureReceivePack(receivePack: ReceivePack, projectName: String, authentication: Authentication?) {
-        receivePack.isAllowCreates = gitConfig.allowCreates
-        receivePack.isAllowDeletes = gitConfig.allowDeletes
-        receivePack.isAllowNonFastForwards = gitConfig.allowNonFastForwards
+        receivePack.isAllowCreates = gitConfiguration.allowCreates
+        receivePack.isAllowDeletes = gitConfiguration.allowDeletes
+        receivePack.isAllowNonFastForwards = gitConfiguration.allowNonFastForwards
         
         receivePack.setPreReceiveHook { _, commands ->
             logger.debug("Pre-receive hook called with ${commands.size} commands")
@@ -260,12 +260,12 @@ class GitHttpController(
             // Validate refs/for/* pushes (Gerrit change creation)
             if (refName.startsWith("refs/for/")) {
                 try {
-                    val repository = gitRepositoryService.openRepository(projectName)
+                    val repository = repositoryService.getRepository(projectName)
                     repository.use { repo ->
                         val revWalk = org.eclipse.jgit.revwalk.RevWalk(repo)
                         try {
                             val commit = revWalk.parseCommit(command.newId)
-                            val changeId = changeIdService.extractChangeId(commit.fullMessage)
+                            val changeId = ChangeIdUtil.extractChangeId(commit.fullMessage)
                             
                             if (changeId == null) {
                                 errors.add("Missing Change-Id in commit ${command.newId.name}")
@@ -292,14 +292,14 @@ class GitHttpController(
             // Validate direct branch pushes
             else if (refName.startsWith("refs/heads/")) {
                 // Check if direct pushes are allowed
-                if (!gitConfig.allowDirectPush) {
+                if (!gitConfiguration.allowDirectPush) {
                     errors.add("Direct pushes to branches are not allowed. Use refs/for/* instead.")
                 }
             }
             
             // Validate tag operations
             else if (refName.startsWith("refs/tags/")) {
-                if (command.type == org.eclipse.jgit.transport.ReceiveCommand.Type.DELETE && !gitConfig.allowDeletes) {
+                if (command.type == org.eclipse.jgit.transport.ReceiveCommand.Type.DELETE && !gitConfiguration.allowDeletes) {
                     errors.add("Tag deletion not allowed: $refName")
                 }
             }
@@ -318,7 +318,7 @@ class GitHttpController(
         val newObjectId = command.newId
         logger.info("Processing change creation for target branch: $targetBranch, commit: ${newObjectId.name}")
         
-        val repository = gitRepositoryService.openRepository(projectName)
+        val repository = repositoryService.getRepository(projectName)
         repository.use { repo ->
             try {
                 val userId = extractUserId(authentication)

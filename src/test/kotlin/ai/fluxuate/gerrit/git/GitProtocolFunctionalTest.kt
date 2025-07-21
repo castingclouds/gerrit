@@ -1,7 +1,7 @@
 package ai.fluxuate.gerrit.git
 
 import ai.fluxuate.gerrit.service.ChangeService
-import ai.fluxuate.gerrit.service.ChangeIdService
+
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
@@ -28,8 +28,7 @@ class GitProtocolFunctionalTest {
     @Autowired
     private lateinit var changeService: ChangeService
 
-    @Autowired
-    private lateinit var changeIdService: ChangeIdService
+    // ChangeIdService functionality now available through ChangeIdUtil
 
     @Autowired
     private lateinit var gitConfig: GitConfiguration

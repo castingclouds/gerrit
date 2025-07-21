@@ -1,5 +1,7 @@
 package ai.fluxuate.gerrit.service
 
+import ai.fluxuate.gerrit.util.ChangeIdUtil
+import ai.fluxuate.gerrit.util.RebaseUtil
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
@@ -462,16 +464,7 @@ class ChangeService(
     @Transactional
     fun submitChange(changeId: String, input: SubmitInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        
-        if (change.status != ChangeStatus.NEW) {
-            throw ConflictException("Cannot submit change with status ${change.status}")
-        }
-        
-        val updatedChange = change.copy(
-            status = ChangeStatus.MERGED,
-            lastUpdatedOn = Instant.now()
-        )
-        
+        val updatedChange = RebaseUtil.performSubmit(change)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -482,14 +475,7 @@ class ChangeService(
     @Transactional
     fun rebaseChange(changeId: String, input: RebaseInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        
-        if (change.status != ChangeStatus.NEW) {
-            throw ConflictException("Cannot rebase change with status ${change.status}")
-        }
-        
-        // TODO: Implement actual rebase logic with Git operations
-        val updatedChange = change.copy(lastUpdatedOn = Instant.now())
-        
+        val updatedChange = RebaseUtil.performRebase(change)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -1020,22 +1006,7 @@ class ChangeService(
     @Transactional
     fun submitRevision(changeId: String, revisionId: String, input: SubmitInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        
-        if (change.status != ChangeStatus.NEW) {
-            throw ConflictException("Cannot submit change with status ${change.status}")
-        }
-        
-        // Verify the revision exists
-        findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-        
-        // TODO: Implement actual Git merge logic
-        // For now, just mark the change as merged
-        val updatedChange = change.copy(
-            status = ChangeStatus.MERGED,
-            lastUpdatedOn = Instant.now()
-        )
-        
+        val updatedChange = RebaseUtil.performRevisionSubmit(change, revisionId)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
@@ -1060,21 +1031,7 @@ class ChangeService(
     @Transactional
     fun rebaseRevision(changeId: String, revisionId: String, input: RebaseInput): ChangeInfo {
         val change = findChangeByIdentifier(changeId)
-        
-        if (change.status != ChangeStatus.NEW) {
-            throw ConflictException("Cannot rebase change with status ${change.status}")
-        }
-        
-        // Verify the revision exists
-        findPatchSetByRevisionId(change, revisionId)
-            ?: throw NotFoundException("Revision $revisionId not found in change $changeId")
-        
-        // TODO: Implement actual Git rebase logic
-        // For now, just update the last updated timestamp
-        val updatedChange = change.copy(
-            lastUpdatedOn = Instant.now()
-        )
-        
+        val updatedChange = RebaseUtil.performRevisionRebase(change, revisionId)
         val savedChange = changeRepository.save(updatedChange)
         return convertToChangeInfo(savedChange)
     }
