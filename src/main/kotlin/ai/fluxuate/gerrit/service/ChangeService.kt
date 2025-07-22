@@ -4,7 +4,7 @@ import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.util.GitUtil
 import ai.fluxuate.gerrit.util.PatchUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
-import ai.fluxuate.gerrit.util.ReviewerUtil
+import ai.fluxuate.gerrit.util.ReviewersUtil
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
@@ -31,7 +31,9 @@ import kotlin.random.Random
 class ChangeService(
     private val changeRepository: ChangeEntityRepository,
     private val accountService: AccountService,
-    private val rebaseUtil: RebaseUtil
+    private val rebaseUtil: RebaseUtil,
+    private val patchUtil: PatchUtil,
+    private val reviewersUtil: ReviewersUtil
 ) {
     
     private val logger = LoggerFactory.getLogger(ChangeService::class.java)
@@ -790,9 +792,8 @@ class ChangeService(
     fun addReviewer(changeId: String, input: ReviewerInput): AddReviewerResult {
         val change = findChangeByIdentifier(changeId)
         
-        // TODO: Resolve reviewer string to account(s)
-        // For now, assume it's an account ID or email
-        val reviewerAccount = resolveReviewer(input.reviewer)
+        // Use ReviewersUtil to resolve reviewer string to account(s)
+        val reviewerAccount = reviewersUtil.resolveReviewer(input.reviewer)
         
         if (reviewerAccount == null) {
             return AddReviewerResult(
@@ -919,53 +920,30 @@ class ChangeService(
     fun suggestReviewers(changeId: String, query: String?, limit: Int?): List<SuggestedReviewerInfo> {
         val change = findChangeByIdentifier(changeId)
         
-        // TODO: Implement actual reviewer suggestion logic
-        // This would typically involve:
-        // 1. Looking at recent reviewers for the project
-        // 2. Looking at file ownership/blame information
-        // 3. Looking at team/group memberships
-        // 4. Filtering by query string if provided
-        
-        // For now, return empty list as placeholder
-        return emptyList()
+        // Use ReviewersUtil to implement actual reviewer suggestion logic
+        return reviewersUtil.suggestReviewers(change, query, limit)
     }
 
     /**
      * Resolve reviewer string to AccountInfo.
-     * This is a placeholder implementation.
+     * Uses ReviewersUtil for actual reviewer resolution logic.
      */
     private fun resolveReviewer(reviewer: String): AccountInfo? {
-        // TODO: Implement actual reviewer resolution logic
-        // This should:
-        // 1. Try to parse as account ID
-        // 2. Try to find by email
-        // 3. Try to find by username
-        // 4. Try to find by display name
-        // 5. Handle group names
-        
-        // For now, create a mock account for testing
-        return try {
-            val accountId = reviewer.toLongOrNull()
-            if (accountId != null) {
-                AccountInfo(
-                    _account_id = accountId,
-                    email = "user$accountId@example.com",
-                    username = "user$accountId",
-                    display_name = "User $accountId",
-                    inactive = false
-                )
-            } else {
-                AccountInfo(
-                    _account_id = reviewer.hashCode().toLong(),
-                    email = if (reviewer.contains("@")) reviewer else "$reviewer@example.com",
-                    username = reviewer,
-                    display_name = reviewer,
-                    inactive = false
-                )
-            }
-        } catch (e: Exception) {
-            null
-        }
+        // Use ReviewersUtil to implement actual reviewer resolution logic
+        return reviewersUtil.resolveReviewer(reviewer)
+    }
+
+    /**
+     * Get revision patch.
+     */
+    fun getRevisionPatch(
+        changeId: String,
+        revisionId: String,
+        zip: Boolean = false
+    ): String {
+        val change = findChangeByIdentifier(changeId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        return GitUtil.generateRevisionPatch(change, patchSet, revisionId, zip)
     }
 
     // ================================
@@ -978,7 +956,7 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevisions(changeId: String): Map<String, RevisionInfo> {
         val change = findChangeByIdentifier(changeId)
-        return PatchUtil.convertPatchSetsToRevisionInfoMap(change)
+        return patchUtil.convertPatchSetsToRevisionInfoMap(change)
     }
 
     /**
@@ -987,8 +965,8 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevision(changeId: String, revisionId: String): RevisionInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
-        return PatchUtil.convertPatchSetToRevisionInfo(patchSet, change)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        return patchUtil.convertPatchSetToRevisionInfo(patchSet, change)
     }
 
     /**
@@ -1008,9 +986,9 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevisionCommit(changeId: String, revisionId: String): CommitInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         
-        return PatchUtil.convertPatchSetToCommitInfo(patchSet, change)
+        return patchUtil.convertPatchSetToCommitInfo(patchSet, change)
     }
 
     /**
@@ -1108,109 +1086,6 @@ class ChangeService(
             labels = appliedLabels,
             reviewers = reviewerResults
         )
-    }
-
-    /**
-     * Find a patch set by revision ID.
-     */
-    private fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): Map<String, Any>? {
-        return when {
-            revisionId == "current" -> {
-                // Return the current (latest) patch set
-                change.patchSets.lastOrNull()
-            }
-            revisionId.matches(Regex("\\d+")) -> {
-                // Revision ID is a patch set number
-                val patchSetNumber = revisionId.toInt()
-                change.patchSets.getOrNull(patchSetNumber - 1)
-            }
-            else -> {
-                // Revision ID is a commit ID or revision hash
-                change.patchSets.find { patchSet ->
-                    val commitId = patchSet["commitId"] as? String
-                    val revision = patchSet["revision"] as? String
-                    (commitId != null && commitId.startsWith(revisionId)) ||
-                    (revision != null && revision.startsWith(revisionId))
-                }
-            }
-        }
-    }
-
-    /**
-     * Convert patch set map to RevisionInfo DTO.
-     */
-    private fun convertPatchSetToRevisionInfo(patchSet: Map<String, Any>, change: ChangeEntity): RevisionInfo {
-        val commitId = patchSet["commitId"] as? String ?: "unknown"
-        // Use uploader as both author and committer since that's what we have in test data
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val subject = patchSet["subject"] as? String ?: change.subject
-        val message = patchSet["message"] as? String ?: subject
-        val createdOn = patchSet["createdOn"] as? String ?: change.createdOn.toString()
-        
-        return RevisionInfo(
-            kind = "REWORK", // TODO: Determine actual change kind
-            _number = change.patchSets.indexOf(patchSet) + 1,
-            created = Instant.parse(createdOn),
-            uploader = AccountInfo(
-                _account_id = (uploaderMap["_account_id"] as? Number)?.toLong() ?: change.ownerId.toLong(),
-                name = uploaderMap["name"] as? String,
-                email = uploaderMap["email"] as? String,
-                username = uploaderMap["username"] as? String
-            ),
-            ref = "refs/changes/${change.id.toString().takeLast(2).padStart(2, '0')}/${change.id}/${change.patchSets.indexOf(patchSet) + 1}",
-            fetch = mapOf(
-                "http" to FetchInfo(
-                    url = "http://localhost:8080/${change.projectName}",
-                    ref = "refs/changes/${change.id.toString().takeLast(2).padStart(2, '0')}/${change.id}/${change.patchSets.indexOf(patchSet) + 1}"
-                )
-            ),
-            commit = convertPatchSetToCommitInfo(patchSet, change),
-            description = patchSet["description"] as? String
-        )
-    }
-
-    /**
-     * Convert patch set map to CommitInfo DTO.
-     */
-    private fun convertPatchSetToCommitInfo(patchSet: Map<String, Any>, change: ChangeEntity): CommitInfo {
-        val commitId = patchSet["commitId"] as? String ?: "unknown"
-        // Use uploader as both author and committer since that's what we have in test data
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val subject = patchSet["subject"] as? String ?: change.subject
-        val message = patchSet["message"] as? String ?: subject
-        val createdOn = patchSet["createdOn"] as? String ?: change.createdOn.toString()
-        
-        return CommitInfo(
-            commit = commitId,
-            parents = emptyList(), // TODO: Extract parent commits
-            author = GitPersonInfo(
-                name = uploaderMap["name"] as? String ?: "Unknown Author",
-                email = uploaderMap["email"] as? String ?: "unknown@example.com",
-                date = Instant.parse(createdOn),
-                tz = 0 // UTC timezone offset
-            ),
-            committer = GitPersonInfo(
-                name = uploaderMap["name"] as? String ?: "Unknown Committer", 
-                email = uploaderMap["email"] as? String ?: "unknown@example.com",
-                date = Instant.parse(createdOn),
-                tz = 0 // UTC timezone offset
-            ),
-            subject = subject,
-            message = message
-        )
-    }
-
-    /**
-     * Get revision patch.
-     */
-    fun getRevisionPatch(
-        changeId: String,
-        revisionId: String,
-        zip: Boolean = false
-    ): String {
-        val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
-        return GitUtil.generateRevisionPatch(change, patchSet, revisionId, zip)
     }
 
     // ===== COMMENT SERVICE METHODS =====
@@ -1542,7 +1417,7 @@ class ChangeService(
         query: String? = null
     ): Map<String, FileInfo> {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.listRevisionFiles(change, patchSet, base, parent, reviewed, query)
     }
 
@@ -1556,7 +1431,7 @@ class ChangeService(
         parent: Int? = null
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.getFileContent(change, patchSet, fileId)
     }
 
@@ -1574,7 +1449,7 @@ class ChangeService(
         whitespace: String? = null
     ): DiffInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         return GitUtil.getFileDiff(change, patchSet, fileId, base, parent, context, intraline, whitespace)
     }
 
@@ -1590,5 +1465,31 @@ class ChangeService(
 
     private fun getFilesComparedToParent(change: ChangeEntity, patchSet: Map<String, Any>, parent: Int): Map<String, FileInfo> {
         return GitUtil.getFilesComparedToParent(change, patchSet, parent)
+    }
+
+    /**
+     * Find a patch set by revision ID.
+     */
+    private fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): Map<String, Any>? {
+        return when {
+            revisionId == "current" -> {
+                // Return the current (latest) patch set
+                change.patchSets.lastOrNull()
+            }
+            revisionId.matches(Regex("\\d+")) -> {
+                // Revision ID is a patch set number
+                val patchSetNumber = revisionId.toInt()
+                change.patchSets.getOrNull(patchSetNumber - 1)
+            }
+            else -> {
+                // Revision ID is a commit ID or revision hash
+                change.patchSets.find { patchSet ->
+                    val commitId = patchSet["commitId"] as? String
+                    val revision = patchSet["revision"] as? String
+                    (commitId != null && commitId.startsWith(revisionId)) ||
+                    (revision != null && revision.startsWith(revisionId))
+                }
+            }
+        }
     }
 }

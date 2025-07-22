@@ -31,7 +31,8 @@ import java.time.Instant
  */
 @Component
 class RebaseUtil(
-    private val gitConfiguration: GitConfiguration
+    private val gitConfiguration: GitConfiguration,
+    private val patchUtil: PatchUtil
 ) {
     
     private val logger = LoggerFactory.getLogger(RebaseUtil::class.java)
@@ -250,12 +251,12 @@ class RebaseUtil(
      */
     fun performRevisionRebase(change: ChangeEntity, revisionId: String): ChangeEntity {
         validateRebasePreconditions(change)
-        PatchUtil.validateRevisionExists(change, revisionId)
+        patchUtil.validateRevisionExists(change, revisionId)
         
         logger.info("Performing revision rebase for change ${change.changeKey}, revision $revisionId")
         
         // Get the actual commit ID from the patch set data
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         val actualCommitId = patchSet["commitId"] as? String 
             ?: throw ConflictException("No commit ID found for revision $revisionId")
             
@@ -341,12 +342,12 @@ class RebaseUtil(
      */
     fun performRevisionSubmit(change: ChangeEntity, revisionId: String): ChangeEntity {
         validateSubmitPreconditions(change)
-        PatchUtil.validateRevisionExists(change, revisionId)
+        patchUtil.validateRevisionExists(change, revisionId)
         
         logger.info("Performing revision submit for change ${change.changeKey}, revision $revisionId")
         
         // Get the actual commit ID from the patch set data
-        val patchSet = PatchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
         val actualCommitId = patchSet["commitId"] as? String 
             ?: throw ConflictException("No commit ID found for revision $revisionId")
             
