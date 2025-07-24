@@ -385,6 +385,20 @@ class AccountService(
     }
     
     /**
+     * Verify password for authentication.
+     */
+    fun verifyPassword(username: String, password: String): Boolean {
+        return try {
+            val entity = resolveAccount(username)
+            val storedPassword = entity.contactInfo["httpPassword"] as? String
+            // In a real implementation, this would use proper password hashing and verification
+            storedPassword == password
+        } catch (e: NotFoundException) {
+            false
+        }
+    }
+    
+    /**
      * Resolve account by various identifiers.
      */
     private fun resolveAccount(accountId: String): UserEntity {
@@ -450,6 +464,11 @@ class AccountService(
             contactInfo["sshKeys"] = listOf(cleanKeyInfo)
         }
         
+        if (input.httpPassword != null) {
+            // Store password securely (in a real implementation, this would be hashed)
+            contactInfo["httpPassword"] = input.httpPassword
+        }
+        
         return contactInfo
     }
     
@@ -466,6 +485,11 @@ class AccountService(
             val sshKeys = (contactInfo["sshKeys"] as? MutableList<Map<String, Any>>) ?: mutableListOf()
             sshKeys.add(cleanKeyInfo)
             contactInfo["sshKeys"] = sshKeys
+        }
+        
+        if (input.httpPassword != null) {
+            // Update password securely (in a real implementation, this would be hashed)
+            contactInfo["httpPassword"] = input.httpPassword
         }
         
         return contactInfo
