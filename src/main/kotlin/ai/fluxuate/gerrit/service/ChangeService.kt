@@ -1,6 +1,7 @@
 package ai.fluxuate.gerrit.service
 
 import ai.fluxuate.gerrit.util.ChangeIdUtil
+import ai.fluxuate.gerrit.util.CommitMessagesUtil
 import ai.fluxuate.gerrit.util.GitUtil
 import ai.fluxuate.gerrit.util.PatchUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
@@ -170,14 +171,12 @@ class ChangeService(
     
     /**
      * Extract Change-Id from commit message.
+     * Uses CommitMessagesUtil for enhanced parsing capabilities.
      */
     private fun extractChangeId(commitMessage: String): String? {
-        val matcher = CHANGE_ID_FOOTER_PATTERN.matcher(commitMessage)
-        return if (matcher.find()) {
-            matcher.group(1)
-        } else {
-            null
-        }
+        // Use the enhanced utility for better parsing
+        val parsed = CommitMessagesUtil.parseCommitMessage(commitMessage)
+        return parsed.changeId
     }
     
     /**
