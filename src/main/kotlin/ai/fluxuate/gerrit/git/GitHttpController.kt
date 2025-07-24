@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.service.ChangeService
 import ai.fluxuate.gerrit.util.ChangeIdUtil
 
 import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.transport.ReceivePack
 import org.eclipse.jgit.transport.UploadPack
 import org.eclipse.jgit.transport.RefAdvertiser
@@ -20,6 +21,10 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import java.io.IOException
 
+/**
+ * Git HTTP Controller that implements the complete Git HTTP protocol
+ * based on JGit's GitFilter implementation.
+ */
 @RestController
 @RequestMapping("/git")
 class GitHttpController(
@@ -30,20 +35,21 @@ class GitHttpController(
 
     private val logger = LoggerFactory.getLogger(GitHttpController::class.java)
 
+    // Smart HTTP Protocol Endpoints
+    
+    /**
+     * Git info/refs endpoint - handles both upload-pack and receive-pack service discovery
+     * Equivalent to JGit's InfoRefsServlet
+     */
     @GetMapping("/{projectName}/info/refs")
     fun getInfoRefs(
         @PathVariable projectName: String,
         @RequestParam("service", required = false) service: String?,
         request: HttpServletRequest,
-        authentication: Authentication?
+        authentication: Authentication
     ): ResponseEntity<StreamingResponseBody> {
         
-        logger.debug("Git info/refs request for project: $projectName, service: $service")
-        
-        if (!hasRepositoryAccess(projectName, service, authentication)) {
-            logger.warn("Access denied for project: $projectName, service: $service")
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
-        }
+        logger.debug("Git info/refs request for project: $projectName, service: $service, user: ${authentication.name}")
         
         return try {
             val repository = repositoryService.getRepository(projectName)
@@ -51,8 +57,9 @@ class GitHttpController(
             when (service) {
                 "git-upload-pack" -> handleUploadPackInfoRefs(repository)
                 "git-receive-pack" -> handleReceivePackInfoRefs(repository)
+                null -> handleDumbInfoRefs(repository) // Dumb HTTP protocol
                 else -> {
-                    logger.warn("Unknown or missing service parameter: $service")
+                    logger.warn("Unknown service parameter: $service")
                     ResponseEntity.badRequest().build()
                 }
             }
@@ -62,6 +69,10 @@ class GitHttpController(
         }
     }
 
+    /**
+     * Git upload-pack endpoint - handles fetch/clone operations
+     * Equivalent to JGit's UploadPackServlet
+     */
     @PostMapping("/{projectName}/git-upload-pack")
     fun uploadPack(
         @PathVariable projectName: String,
@@ -96,6 +107,10 @@ class GitHttpController(
         }
     }
 
+    /**
+     * Git receive-pack endpoint - handles push operations
+     * Equivalent to JGit's ReceivePackServlet
+     */
     @PostMapping("/{projectName}/git-receive-pack")
     fun receivePack(
         @PathVariable projectName: String,
@@ -130,28 +145,172 @@ class GitHttpController(
         }
     }
 
-    private fun configureUploadPack(uploadPack: UploadPack) {
-        logger.debug("Configuring upload pack for Git fetch operations")
+    // Dumb HTTP Protocol Endpoints (for compatibility)
+    
+    /**
+     * HEAD file endpoint - serves the HEAD ref
+     * Equivalent to JGit's TextFileServlet for HEAD
+     */
+    @GetMapping("/{projectName}/HEAD")
+    fun getHead(
+        @PathVariable projectName: String,
+        authentication: Authentication?
+    ): ResponseEntity<String> {
+        
+        if (!hasRepositoryAccess(projectName, null, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
+        }
+        
+        return try {
+            val repository = repositoryService.getRepository(projectName)
+            val head = repository.findRef(Constants.HEAD)
+            val content = if (head?.isSymbolic == true) {
+                "ref: ${head.target.name}\n"
+            } else {
+                "${head?.objectId?.name ?: "0000000000000000000000000000000000000000"}\n"
+            }
+            
+            ResponseEntity.ok()
+                .contentType(MediaType.TEXT_PLAIN)
+                .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+                .body(content)
+        } catch (e: Exception) {
+            logger.error("Error serving HEAD for project: $projectName", e)
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+        }
     }
 
-    private fun configureReceivePack(receivePack: ReceivePack, projectName: String, authentication: Authentication?) {
-        receivePack.isAllowCreates = gitConfiguration.allowCreates
-        receivePack.isAllowDeletes = gitConfiguration.allowDeletes
-        receivePack.isAllowNonFastForwards = gitConfiguration.allowNonFastForwards
+    /**
+     * Objects info/packs endpoint - lists available pack files
+     * Equivalent to JGit's InfoPacksServlet
+     */
+    @GetMapping("/{projectName}/objects/info/packs")
+    fun getInfoPacks(
+        @PathVariable projectName: String,
+        authentication: Authentication?
+    ): ResponseEntity<String> {
         
-        receivePack.setPreReceiveHook { _, commands ->
-            logger.debug("Pre-receive hook called with ${commands.size} commands")
-            val errors = validatePushCommands(commands, projectName, authentication)
-            if (errors.isNotEmpty()) {
-                logger.warn("Push validation failed: ${errors.joinToString(", ")}")
-            }
+        if (!hasRepositoryAccess(projectName, null, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
         }
         
-        receivePack.setPostReceiveHook { _, commands ->
-            logger.debug("Post-receive hook called with ${commands.size} commands")
-            processPushCommands(commands, projectName, authentication)
+        return try {
+            val repository = repositoryService.getRepository(projectName)
+            val objectsDir = repository.directory.resolve("objects")
+            val packsDir = objectsDir.resolve("pack")
+            
+            val content = if (packsDir.exists()) {
+                packsDir.listFiles { file -> file.name.endsWith(".pack") }
+                    ?.joinToString("\n") { "P ${it.name}" } ?: ""
+            } else {
+                ""
+            }
+            
+            ResponseEntity.ok()
+                .contentType(MediaType.TEXT_PLAIN)
+                .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+                .body(content + "\n")
+        } catch (e: Exception) {
+            logger.error("Error serving info/packs for project: $projectName", e)
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
         }
     }
+
+    /**
+     * Loose object endpoint - serves individual objects
+     * Equivalent to JGit's ObjectFileServlet.Loose
+     */
+    @GetMapping("/{projectName}/objects/{dir}/{file}")
+    fun getLooseObject(
+        @PathVariable projectName: String,
+        @PathVariable dir: String,
+        @PathVariable file: String,
+        authentication: Authentication?
+    ): ResponseEntity<StreamingResponseBody> {
+        
+        if (!hasRepositoryAccess(projectName, null, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
+        }
+        
+        // Validate object name format
+        if (!dir.matches(Regex("[0-9a-f]{2}")) || !file.matches(Regex("[0-9a-f]{38}"))) {
+            return ResponseEntity.badRequest().build()
+        }
+        
+        return try {
+            val repository = repositoryService.getRepository(projectName)
+            val objectsDir = repository.directory.resolve("objects")
+            val objectFile = objectsDir.resolve(dir).resolve(file)
+            
+            if (!objectFile.exists()) {
+                return ResponseEntity.notFound().build()
+            }
+            
+            ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CACHE_CONTROL, "max-age=31536000")
+                .body(StreamingResponseBody { outputStream ->
+                    objectFile.inputStream().use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                })
+        } catch (e: Exception) {
+            logger.error("Error serving loose object $dir/$file for project: $projectName", e)
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+        }
+    }
+
+    /**
+     * Pack file endpoint - serves pack files
+     * Equivalent to JGit's ObjectFileServlet.Pack
+     */
+    @GetMapping("/{projectName}/objects/pack/{packFile}")
+    fun getPackFile(
+        @PathVariable projectName: String,
+        @PathVariable packFile: String,
+        authentication: Authentication?
+    ): ResponseEntity<StreamingResponseBody> {
+        
+        if (!hasRepositoryAccess(projectName, null, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
+        }
+        
+        // Validate pack file name format
+        if (!packFile.matches(Regex("pack-[0-9a-f]{40}\\.(pack|idx)"))) {
+            return ResponseEntity.badRequest().build()
+        }
+        
+        return try {
+            val repository = repositoryService.getRepository(projectName)
+            val objectsDir = repository.directory.resolve("objects")
+            val packDir = objectsDir.resolve("pack")
+            val file = packDir.resolve(packFile)
+            
+            if (!file.exists()) {
+                return ResponseEntity.notFound().build()
+            }
+            
+            val contentType = if (packFile.endsWith(".pack")) {
+                MediaType.APPLICATION_OCTET_STREAM
+            } else {
+                MediaType.APPLICATION_OCTET_STREAM
+            }
+            
+            ResponseEntity.ok()
+                .contentType(contentType)
+                .header(HttpHeaders.CACHE_CONTROL, "max-age=31536000")
+                .body(StreamingResponseBody { outputStream ->
+                    file.inputStream().use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                })
+        } catch (e: Exception) {
+            logger.error("Error serving pack file $packFile for project: $projectName", e)
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+        }
+    }
+
+    // Private helper methods
 
     private fun handleUploadPackInfoRefs(repository: Repository): ResponseEntity<StreamingResponseBody> {
         return ResponseEntity.ok()
@@ -163,12 +322,21 @@ class GitHttpController(
                     val uploadPack = UploadPack(repository)
                     configureUploadPack(uploadPack)
                     
+                    // Write service header
                     outputStream.write("001e# service=git-upload-pack\n".toByteArray())
                     outputStream.write("0000".toByteArray())
                     
+                    // Use JGit's native RefAdvertiser to handle empty repositories properly
                     val pktOut = PacketLineOut(outputStream)
                     val refAdvertiser = RefAdvertiser.PacketLineOutRefAdvertiser(pktOut)
-                    uploadPack.sendAdvertisedRefs(refAdvertiser)
+                    
+                    try {
+                        uploadPack.sendAdvertisedRefs(refAdvertiser)
+                    } catch (e: org.eclipse.jgit.errors.MissingObjectException) {
+                        // Handle empty repository case - JGit will gracefully handle this
+                        // by not advertising any refs, which is correct for empty repos
+                        logger.debug("Repository appears to be empty, no refs to advertise")
+                    }
                 }
             })
     }
@@ -193,20 +361,48 @@ class GitHttpController(
             })
     }
 
-    private fun processPushCommands(
-        commands: Collection<org.eclipse.jgit.transport.ReceiveCommand>,
-        projectName: String,
-        authentication: Authentication?
-    ) {
-        for (command in commands) {
-            val refName = command.refName
-            if (refName.startsWith("refs/for/")) {
-                logger.info("Creating/updating change for ref: $refName in project: $projectName")
-                processChangeCreation(command, projectName, authentication)
-            } else {
-                logger.info("Processing direct push to ref: $refName in project: $projectName")
-                processDirectBranchPush(command, projectName, authentication)
+    private fun handleDumbInfoRefs(repository: Repository): ResponseEntity<StreamingResponseBody> {
+        return ResponseEntity.ok()
+            .contentType(MediaType.TEXT_PLAIN)
+            .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+            .body(object : StreamingResponseBody {
+                @Throws(IOException::class)
+                override fun writeTo(outputStream: java.io.OutputStream) {
+                    val refs = repository.refDatabase.refs
+                    for (ref in refs) {
+                        val line = "${ref.objectId.name}\t${ref.name}\n"
+                        outputStream.write(line.toByteArray())
+                    }
+                }
+            })
+    }
+
+    private fun configureUploadPack(uploadPack: UploadPack) {
+        logger.debug("Configuring upload pack for Git fetch operations")
+        // Add any custom upload pack configuration here
+    }
+
+    private fun configureReceivePack(receivePack: ReceivePack, projectName: String, authentication: Authentication?) {
+        receivePack.isAllowCreates = gitConfiguration.allowCreates
+        receivePack.isAllowDeletes = gitConfiguration.allowDeletes
+        receivePack.isAllowNonFastForwards = gitConfiguration.allowNonFastForwards
+        
+        receivePack.setPreReceiveHook { _, commands ->
+            logger.debug("Pre-receive hook called with ${commands.size} commands")
+            val errors = validatePushCommands(commands, projectName, authentication)
+            if (errors.isNotEmpty()) {
+                logger.warn("Push validation failed: ${errors.joinToString(", ")}")
+                // Reject all commands with validation errors
+                for (command in commands) {
+                    command.setResult(org.eclipse.jgit.transport.ReceiveCommand.Result.REJECTED_OTHER_REASON, 
+                                    errors.joinToString("; "))
+                }
             }
+        }
+        
+        receivePack.setPostReceiveHook { _, commands ->
+            logger.debug("Post-receive hook called with ${commands.size} commands")
+            processPushCommands(commands, projectName, authentication)
         }
     }
 
@@ -223,7 +419,7 @@ class GitHttpController(
         
         // For now, allow read access to all authenticated users and anonymous read access
         // TODO: Integrate with proper Gerrit permission system
-        if (service == "git-upload-pack") {
+        if (service == "git-upload-pack" || service == null) {
             logger.debug("Allowing read access to project: $projectName for user: ${authentication?.name ?: "anonymous"}")
             return true
         }
@@ -268,9 +464,9 @@ class GitHttpController(
                             val changeId = ChangeIdUtil.extractChangeId(commit.fullMessage)
                             
                             if (changeId == null) {
-                                errors.add("Missing Change-Id in commit ${command.newId.name}")
+                                errors.add("Commit ${command.newId.name.substring(0, 8)} needs Change-Id identifier. Install client hook to proceed.")
                             } else if (!isValidChangeId(changeId)) {
-                                errors.add("Invalid Change-Id format in commit ${command.newId.name}: $changeId")
+                                errors.add("Commit ${command.newId.name.substring(0, 8)} has invalid Change-Id format: $changeId")
                             }
                             
                             // Validate target branch exists
@@ -306,6 +502,23 @@ class GitHttpController(
         }
         
         return errors
+    }
+
+    private fun processPushCommands(
+        commands: Collection<org.eclipse.jgit.transport.ReceiveCommand>,
+        projectName: String,
+        authentication: Authentication?
+    ) {
+        for (command in commands) {
+            val refName = command.refName
+            if (refName.startsWith("refs/for/")) {
+                logger.info("Creating/updating change for ref: $refName in project: $projectName")
+                processChangeCreation(command, projectName, authentication)
+            } else {
+                logger.info("Processing direct push to ref: $refName in project: $projectName")
+                processDirectBranchPush(command, projectName, authentication)
+            }
+        }
     }
 
     private fun processChangeCreation(

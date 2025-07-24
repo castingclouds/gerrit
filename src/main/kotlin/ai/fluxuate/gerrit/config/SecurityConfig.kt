@@ -43,10 +43,19 @@ class SecurityConfig(
                     .requestMatchers("/api/login", "/api/register").permitAll()
                     // Allow OPTIONS requests for CORS preflight
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                    // Git operations - require auth for push, challenge for read if no credentials
+                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/git/*/git-receive-pack")
+                        .authenticated()
+                    .requestMatchers("/git/**")
+                        .authenticated()
                     // All other requests require authentication
                     .anyRequest().authenticated()
             }
-            .httpBasic { }
+            .httpBasic { basic ->
+                basic.realmName("Gerrit Code Review")
+            }
+            .authenticationProvider(authenticationProvider())
+            .anonymous { it.disable() }
             .build()
     }
 
