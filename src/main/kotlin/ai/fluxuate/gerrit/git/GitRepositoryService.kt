@@ -4,13 +4,18 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.lib.PersonIdent
+import org.eclipse.jgit.lib.ObjectId
+import org.eclipse.jgit.lib.RefUpdate
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.TimeZone
 import kotlin.io.path.exists
 import kotlin.io.path.createDirectories
+import java.util.Date
 
 /**
  * Simple Git repository service using pure JGit calls.
@@ -22,7 +27,7 @@ class GitRepositoryService(
     private val logger = LoggerFactory.getLogger(GitRepositoryService::class.java)
 
     /**
-     * Creates a new bare Git repository.
+     * Creates a new bare Git repository with an initial branch.
      */
     fun createRepository(projectName: String, bare: Boolean = true): Repository {
         val repositoryPath = getRepositoryPath(projectName)
@@ -33,14 +38,59 @@ class GitRepositoryService(
         
         repositoryPath.createDirectories()
         
-        return try {
+        val gitRepo = try {
             Git.init()
                 .setDirectory(repositoryPath.toFile())
                 .setBare(bare)
-                .call().repository
-
+                .setInitialBranch("trunk")
+                .call()
         } catch (e: Exception) {
             throw GitRepositoryException("Failed to create repository '$projectName'", e)
+        }
+        
+        // Create an initial empty commit to establish the trunk branch
+        createInitialCommitForBareRepository(gitRepo)
+        
+        return gitRepo.repository
+    }
+
+    /**
+     * Creates an initial empty commit for a bare repository
+     */
+    private fun createInitialCommitForBareRepository(git: Git) {
+        try {
+            val repository = git.repository
+            
+            // Create a new empty tree
+            val treeId = repository.newObjectInserter().use { inserter ->
+                val treeFormatter = org.eclipse.jgit.lib.TreeFormatter()
+                val treeId = inserter.insert(treeFormatter)
+                inserter.flush()
+                treeId
+            }
+            
+            // Create the commit
+            val person = PersonIdent("Gerrit", "gerrit@localhost", Date(), TimeZone.getDefault())
+            val commitBuilder = org.eclipse.jgit.lib.CommitBuilder()
+            commitBuilder.setTreeId(treeId)
+            commitBuilder.setAuthor(person)
+            commitBuilder.setCommitter(person)
+            commitBuilder.setMessage("Initial commit")
+            
+            val commitId = repository.newObjectInserter().use { inserter ->
+                val commitId = inserter.insert(commitBuilder)
+                inserter.flush()
+                commitId
+            }
+            
+            // Update the trunk branch to point to the new commit
+            val refUpdate = repository.updateRef("refs/heads/trunk")
+            refUpdate.setNewObjectId(commitId)
+            refUpdate.update()
+            
+        } catch (e: Exception) {
+            logger.error("Failed to create initial commit for bare repository", e)
+            throw GitRepositoryException("Failed to create initial commit: ${e.message}", e)
         }
     }
 
@@ -116,7 +166,7 @@ class GitRepositoryService(
             if (head?.isSymbolic == true) {
                 head.target.name
             } else {
-                "refs/heads/main"
+                "refs/heads/trunk"
             }
         } catch (e: Exception) {
             throw GitRepositoryException("Failed to get HEAD for repository '$projectName'", e)
@@ -184,6 +234,21 @@ class GitRepositoryService(
      */
     fun cleanupReferences(projectName: String) {
         // For simple implementation, no additional cleanup needed
+    }
+
+    /**
+     * Lists all repositories in the base path.
+     */
+    fun listRepositories(): List<String> {
+        val basePath = Paths.get(gitConfig.repositoryBasePath)
+        if (!basePath.exists()) {
+            return emptyList()
+        }
+        
+        return basePath.toFile().listFiles()
+            ?.filter { it.isDirectory && repositoryExists(it.name) }
+            ?.map { it.name }
+            ?: emptyList()
     }
 
     private fun getRepositoryPath(projectName: String): Path {
