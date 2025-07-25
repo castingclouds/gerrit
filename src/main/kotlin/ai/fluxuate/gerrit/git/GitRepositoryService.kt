@@ -4,6 +4,7 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.File
 import java.nio.file.Path
@@ -18,6 +19,7 @@ import kotlin.io.path.createDirectories
 class GitRepositoryService(
     private val gitConfig: GitConfiguration
 ) {
+    private val logger = LoggerFactory.getLogger(GitRepositoryService::class.java)
 
     /**
      * Creates a new bare Git repository.
@@ -206,6 +208,24 @@ class GitRepositoryService(
             repository.exactRef(ref) != null
         } catch (e: Exception) {
             false
+        } finally {
+            repository.close()
+        }
+    }
+
+    /**
+     * Ensures repository has at least one commit and proper refs.
+     */
+    fun ensureRepositoryInitialized(projectName: String) {
+        val repository = openRepository(projectName)
+        try {
+            val allRefs = repository.refDatabase.refs
+            if (allRefs.isEmpty()) {
+                logger.info("Repository $projectName is empty, creating initial commit")
+                createInitialBranches(projectName, listOf("main"), initialCommit = true)
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to ensure repository $projectName is initialized", e)
         } finally {
             repository.close()
         }

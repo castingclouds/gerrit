@@ -43,11 +43,12 @@ class SecurityConfig(
                     .requestMatchers("/api/login", "/api/register").permitAll()
                     // Allow OPTIONS requests for CORS preflight
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                    // Git operations - require auth for push, challenge for read if no credentials
-                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/git/*/git-receive-pack")
-                        .authenticated()
-                    .requestMatchers("/git/**")
-                        .authenticated()
+                    // Git HTTP protocol - allow anonymous read, require auth for write
+                    .requestMatchers("/git/*/git-upload-pack").permitAll()
+                    .requestMatchers("/git/*/info/refs").permitAll()
+                    .requestMatchers("/git/*/HEAD").permitAll()
+                    .requestMatchers("/git/*/objects/**").permitAll()
+                    .requestMatchers("/git/*/git-receive-pack").authenticated()
                     // All other requests require authentication
                     .anyRequest().authenticated()
             }
@@ -55,7 +56,6 @@ class SecurityConfig(
                 basic.realmName("Gerrit Code Review")
             }
             .authenticationProvider(authenticationProvider())
-            .anonymous { it.disable() }
             .build()
     }
 

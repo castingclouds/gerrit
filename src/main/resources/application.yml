@@ -92,6 +92,10 @@ gerrit:
     gc-interval-hours: 24
     pack-refs-enabled: true
     pack-refs-interval-hours: 168
+    allow-creates: true
+    allow-deletes: true
+    allow-non-fast-forwards: false
+    allow-direct-push: false
 
   auth:
     allow-anonymous: true
@@ -240,6 +244,10 @@ gerrit:
     gc-interval-hours: 24
     pack-refs-enabled: false
     pack-refs-interval-hours: 168
+    allow-creates: true
+    allow-deletes: true
+    allow-non-fast-forwards: false
+    allow-direct-push: false
 
   auth:
     allow-anonymous: true
