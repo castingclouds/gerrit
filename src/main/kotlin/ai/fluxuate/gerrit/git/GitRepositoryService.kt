@@ -1,5 +1,6 @@
 package ai.fluxuate.gerrit.git
 
+import ai.fluxuate.gerrit.service.AccountService
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.Repository
@@ -9,6 +10,7 @@ import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.RefUpdate
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.security.core.context.SecurityContextHolder
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -22,14 +24,15 @@ import java.util.Date
  */
 @Service
 class GitRepositoryService(
-    private val gitConfig: GitConfiguration
+    private val gitConfig: GitConfiguration,
+    private val accountService: AccountService
 ) {
     private val logger = LoggerFactory.getLogger(GitRepositoryService::class.java)
 
     /**
      * Creates a new bare Git repository with an initial branch.
      */
-    fun createRepository(projectName: String, bare: Boolean = true): Repository {
+    fun createRepository(projectName: String, bare: Boolean = true, createEmptyCommit: Boolean = true): Repository {
         val repositoryPath = getRepositoryPath(projectName)
         
         if (repositoryPath.exists()) {
@@ -48,8 +51,10 @@ class GitRepositoryService(
             throw GitRepositoryException("Failed to create repository '$projectName'", e)
         }
         
-        // Create an initial empty commit to establish the trunk branch
-        createInitialCommitForBareRepository(gitRepo)
+        // Create an initial empty commit to establish the trunk branch only if requested
+        if (createEmptyCommit) {
+            createInitialCommitForBareRepository(gitRepo)
+        }
         
         return gitRepo.repository
     }
@@ -69,8 +74,13 @@ class GitRepositoryService(
                 treeId
             }
             
-            // Create the commit
-            val person = PersonIdent("Gerrit", "gerrit@localhost", Date(), TimeZone.getDefault())
+            // Get current authenticated user
+            val authentication = SecurityContextHolder.getContext().authentication
+            val username = authentication?.name ?: "unknown"
+            val userService = accountService.getAccount(username)
+
+            // Create the commit with authenticated user info
+            val person = PersonIdent(userService.name, userService.email, Date(), TimeZone.getDefault())
             val commitBuilder = org.eclipse.jgit.lib.CommitBuilder()
             commitBuilder.setTreeId(treeId)
             commitBuilder.setAuthor(person)
