@@ -37,8 +37,8 @@ class GitRepositoryService(
             Git.init()
                 .setDirectory(repositoryPath.toFile())
                 .setBare(bare)
-                .call()
-                .repository
+                .call().repository
+
         } catch (e: Exception) {
             throw GitRepositoryException("Failed to create repository '$projectName'", e)
         }
@@ -157,49 +157,6 @@ class GitRepositoryService(
     }
 
     /**
-     * Creates initial branches with an empty commit to establish the branch.
-     */
-    fun createInitialBranches(projectName: String, branches: List<String> = listOf("main"), initialCommit: Boolean = true) {
-        if (!initialCommit) return
-        
-        val repository = openRepository(projectName)
-        try {
-            val firstBranch = branches.firstOrNull() ?: "main"
-            
-            // Create an empty tree
-            val treeId = repository.newObjectInserter().use { inserter ->
-                val treeFormatter = org.eclipse.jgit.lib.TreeFormatter()
-                inserter.insert(treeFormatter)
-            }
-            
-            // Create initial commit
-            val commitId = repository.newObjectInserter().use { inserter ->
-                val commit = org.eclipse.jgit.lib.CommitBuilder()
-                commit.setTreeId(treeId)
-                commit.setMessage("Initial commit")
-                commit.setAuthor(org.eclipse.jgit.lib.PersonIdent("Gerrit System", "system@gerrit.local"))
-                commit.setCommitter(org.eclipse.jgit.lib.PersonIdent("Gerrit System", "system@gerrit.local"))
-                inserter.insert(commit)
-            }
-            
-            // Create the main branch pointing to the initial commit
-            val refUpdate = repository.updateRef("refs/heads/$firstBranch")
-            refUpdate.setNewObjectId(commitId)
-            refUpdate.update()
-            
-            // Set HEAD to point to the main branch
-            val headUpdate = repository.updateRef(Constants.HEAD)
-            headUpdate.link("refs/heads/$firstBranch")
-            headUpdate.update()
-            
-        } catch (e: Exception) {
-            throw GitRepositoryException("Failed to create initial branches for repository '$projectName'", e)
-        } finally {
-            repository.close()
-        }
-    }
-
-    /**
      * Validates that a reference exists in a repository.
      */
     fun validateRef(projectName: String, ref: String): Boolean {
@@ -215,20 +172,11 @@ class GitRepositoryService(
 
     /**
      * Ensures repository has at least one commit and proper refs.
+     * For empty repositories, we don't create any initial commit.
      */
     fun ensureRepositoryInitialized(projectName: String) {
-        val repository = openRepository(projectName)
-        try {
-            val allRefs = repository.refDatabase.refs
-            if (allRefs.isEmpty()) {
-                logger.info("Repository $projectName is empty, creating initial commit")
-                createInitialBranches(projectName, listOf("main"), initialCommit = true)
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to ensure repository $projectName is initialized", e)
-        } finally {
-            repository.close()
-        }
+        // Do nothing - allow empty repositories
+        logger.debug("Repository $projectName is intentionally left empty")
     }
 
     /**

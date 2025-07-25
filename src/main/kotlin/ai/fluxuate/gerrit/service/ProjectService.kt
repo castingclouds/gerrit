@@ -94,18 +94,15 @@ class ProjectService(
         
         val savedProject = projectRepository.save(projectEntity)
         
-        // Initialize Git repository
-        try {
-            gitRepositoryService.createRepository(projectName, bare = true)
-            
-            // Create initial branches if specified
-            val initialBranches = input.branches?.takeIf { it.isNotEmpty() } ?: listOf("main")
-            gitRepositoryService.createInitialBranches(projectName, initialBranches, initialCommit = input.createEmptyCommit != false)
-        } catch (e: Exception) {
-            // If Git repository creation fails, clean up the database entry
-            projectRepository.delete(savedProject)
-            throw ConflictException("Failed to initialize Git repository for project '$projectName': ${e.message}")
-        }
+            // Initialize Git repository
+            try {
+                gitRepositoryService.createRepository(projectName, bare = true)
+                // Repository is created empty - no initial commit or branches
+            } catch (e: Exception) {
+                // If Git repository creation fails, clean up the database entry
+                projectRepository.delete(savedProject)
+                throw ConflictException("Failed to initialize Git repository for project '$projectName': ${e.message}")
+            }
         
         return convertToProjectInfo(savedProject, includeDescription = true, includeTree = false, branches = null)
     }
