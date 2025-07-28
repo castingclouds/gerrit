@@ -17,6 +17,7 @@ import java.nio.file.Paths
 import java.util.TimeZone
 import kotlin.io.path.exists
 import kotlin.io.path.createDirectories
+import kotlin.io.path.writeText
 import java.util.Date
 
 /**
@@ -50,6 +51,9 @@ class GitRepositoryService(
         } catch (e: Exception) {
             throw GitRepositoryException("Failed to create repository '$projectName'", e)
         }
+
+        // Install Git hooks
+        installGitHooks(repositoryPath)
         
         // Create an initial empty commit to establish the trunk branch only if requested
         if (createEmptyCommit) {
@@ -278,6 +282,51 @@ class GitRepositoryService(
         if (projectName.length > 255) {
             throw GitRepositoryException("Project name is too long")
         }
+    }
+
+    /**
+     * Installs necessary Git hooks for the repository.
+     */
+    private fun installGitHooks(repositoryPath: Path) {
+        try {
+            val hooksDir = repositoryPath.resolve("hooks")
+            if (!hooksDir.exists()) {
+                hooksDir.createDirectories()
+            }
+
+            // Install pre-receive hook
+            installPreReceiveHook(hooksDir)
+
+            logger.debug("Successfully installed Git hooks for repository at: $repositoryPath")
+        } catch (e: Exception) {
+            logger.error("Failed to install Git hooks for repository at: $repositoryPath", e)
+            throw GitRepositoryException("Failed to install Git hooks: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Installs the pre-receive hook for Change-Id validation.
+     */
+    private fun installPreReceiveHook(hooksDir: Path) {
+        val preReceiveHookPath = hooksDir.resolve("pre-receive")
+        val preReceiveHookContent = getPreReceiveHookContent()
+
+        preReceiveHookPath.writeText(preReceiveHookContent)
+
+        // Make the hook executable
+        val hookFile = preReceiveHookPath.toFile()
+        hookFile.setExecutable(true)
+
+        logger.debug("Pre-receive hook installed at: $preReceiveHookPath")
+    }
+
+    /**
+     * Returns the content of the pre-receive hook script from classpath resource.
+     */
+    private fun getPreReceiveHookContent(): String {
+        val resourceStream = javaClass.classLoader.getResourceAsStream("git-hooks/pre-receive")
+        return resourceStream?.bufferedReader()?.use { it.readText() }
+            ?: throw GitRepositoryException("Failed to load pre-receive hook from resources")
     }
 }
 

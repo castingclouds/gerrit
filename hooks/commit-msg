@@ -1,0 +1,82 @@
+#!/bin/sh
+#
+# Part of Gerrit Code Review (https://www.gerritcodereview.com/)
+#
+# Copyright (C) 2009 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This script is designed to be installed as a Git commit-msg hook to
+# automatically add a Change-Id to commit messages.
+
+# avoid [[ which is not POSIX sh.
+if test "$#" != 1 ; then
+  echo "$0 requires an argument."
+  exit 1
+fi
+
+if test ! -f "$1" ; then
+  echo "file does not exist: $1"
+  exit 1
+fi
+
+# $RANDOM will be undefined if not using bash, so use a fallback
+random_number=${RANDOM:-$$}
+
+# Remove any existing Change-Id lines
+CHANGE_ID_AFTER="Bug|Issue|Feature|Fixes|Fixed"
+CHANGE_ID_BEFORE="^\s*\(\#\|Change-Id: I[0-9a-f]\{40\}\)$"
+
+# Check if Change-Id is already present
+if grep -q "^Change-Id: I[0-9a-f]\{40\}$" "$1"; then
+  exit 0
+fi
+
+# Extract the commit message
+MSG="$(cat $1)"
+
+# Check if the message is a merge commit
+if echo "$MSG" | head -1 | grep -q '^Merge '; then
+  exit 0
+fi
+
+# Compute the Change-Id
+id_data=$(
+  echo "$MSG" |
+  git hash-object --stdin |
+  tr -d '\n' |
+  tr -d '\r'
+)
+id_sha1=$(echo "$id_data" | sha1sum | cut -c1-40)
+id="I$id_sha1"
+
+# Insert the Change-Id at the right position
+T="$1.tmp.${random_number}"
+while read line; do
+  echo "$line"
+  if [ -z "$line" ]; then
+    # Insert Change-Id before the first blank line after footers
+    if echo "$next_line" | grep -q "^[a-zA-Z0-9-][a-zA-Z0-9-]*:"; then
+      echo "Change-Id: $id"
+    fi
+  fi
+  next_line="$line"
+done < "$1" > "$T"
+
+# If we didn't insert the Change-Id yet, add it at the end
+if ! grep -q "^Change-Id: " "$T"; then
+  echo >> "$T"
+  echo "Change-Id: $id" >> "$T"
+fi
+
+mv "$T" "$1"

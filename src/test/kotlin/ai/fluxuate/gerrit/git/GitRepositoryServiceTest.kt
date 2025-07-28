@@ -1,5 +1,6 @@
 package ai.fluxuate.gerrit.git
 
+import ai.fluxuate.gerrit.service.AccountService
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.AfterEach
@@ -24,6 +25,7 @@ class GitRepositoryServiceTest {
 
     private lateinit var gitConfig: GitConfiguration
     private lateinit var gitRepositoryService: GitRepositoryService
+    private lateinit var accountService: AccountService
 
     @BeforeEach
     fun setUp() {
@@ -54,7 +56,7 @@ class GitRepositoryServiceTest {
             packRefsEnabled = false
             packRefsIntervalHours = 168
         }
-        gitRepositoryService = GitRepositoryService(gitConfig)
+        gitRepositoryService = GitRepositoryService(gitConfig, accountService)
     }
 
     @AfterEach
