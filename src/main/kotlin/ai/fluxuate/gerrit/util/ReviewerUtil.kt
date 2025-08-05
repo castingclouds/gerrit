@@ -326,9 +326,8 @@ class ReviewerUtil(
     private fun getFileOwners(change: ChangeEntity): List<UserEntity> {
         return try {
             // Get the latest patch set from the change
-            val patchSets = change.patchSets as? List<Map<String, Any>> ?: return emptyList()
-            val latestPatchSet = patchSets.lastOrNull() ?: return emptyList()
-            val revision = latestPatchSet["revision"] as? String ?: return emptyList()
+            val latestPatchSet = change.patchSets.lastOrNull() ?: return emptyList()
+            val revision = latestPatchSet.commitId ?: return emptyList()
             
             // Get files modified in this change
             val modifiedFiles = GitUtil.getAllFilesInRevision(change, latestPatchSet)

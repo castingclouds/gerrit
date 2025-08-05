@@ -19,8 +19,9 @@ data class PatchSetEntity(
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
 
-    @Column(name = "change_id", nullable = false)
-    val changeId: Long,
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "change_id", nullable = false)
+    val change: ChangeEntity,
 
     @Column(name = "patch_set_number", nullable = false)
     val patchSetNumber: Int,
@@ -73,9 +74,9 @@ data class PatchSetEntity(
      */
     val refName: String
         get() {
-            val changeIdStr = changeId.toString()
+            val changeIdStr = change.id.toString()
             val lastTwoDigits = changeIdStr.takeLast(2).padStart(2, '0')
-            return "refs/changes/$lastTwoDigits/$changeId/$patchSetNumber"
+            return "refs/changes/$lastTwoDigits/${change.id}/$patchSetNumber"
         }
 
     /**

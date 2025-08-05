@@ -65,12 +65,12 @@ data class ChangeEntity(
     val cherryPickOf: Int? = null,
 
     /**
-     * Patch sets stored as JSONB array.
-     * Each patch set contains: id, commitId, uploader, createdOn, description, etc.
+     * Patch sets associated with this change.
+     * Proper JPA @OneToMany relationship to PatchSetEntity.
      */
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "patch_sets", columnDefinition = "jsonb")
-    val patchSets: List<Map<String, Any>> = emptyList(),
+    @OneToMany(mappedBy = "change", fetch = FetchType.LAZY, cascade = [CascadeType.ALL])
+    @OrderBy("patchSetNumber ASC")
+    val patchSets: List<PatchSetEntity> = emptyList(),
 
     /**
      * Comments stored as JSONB array.

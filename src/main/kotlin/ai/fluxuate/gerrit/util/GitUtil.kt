@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.BadRequestException
 import ai.fluxuate.gerrit.api.exception.NotFoundException
 import ai.fluxuate.gerrit.model.ChangeEntity
+import ai.fluxuate.gerrit.model.PatchSetEntity
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.DiffFormatter
@@ -60,14 +61,14 @@ object GitUtil {
      * Generate a patch file for a specific revision.
      * 
      * @param change The change entity
-     * @param patchSet The patch set data as Map<String, Any>
+     * @param patchSet The patch set data
      * @param revisionId The revision identifier
      * @param zip Whether to return zipped format
      * @return The patch content as string
      */
     fun generateRevisionPatch(
         change: ChangeEntity,
-        patchSet: Map<String, Any>,
+        patchSet: PatchSetEntity,
         revisionId: String,
         zip: Boolean = false
     ): String {
@@ -117,10 +118,10 @@ object GitUtil {
             }
         } catch (e: Exception) {
             // Fallback to placeholder if Git operations fail
-            val revision = patchSet["revision"] as? String ?: revisionId
-            val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-            val uploaderName = uploaderMap["name"] as? String ?: "Unknown"
-            val uploaderEmail = uploaderMap["email"] as? String ?: "unknown@example.com"
+            val revision = patchSet.commitId ?: revisionId
+            // TODO: Lookup user info by uploaderId from user service/repository
+            val uploaderName = "User-${patchSet.uploaderId}" // Placeholder - should lookup from user service
+            val uploaderEmail = "user${patchSet.uploaderId}@example.com" // Placeholder - should lookup from user service
             
             """
                 |From ${revision}def456 Mon Sep 17 00:00:00 2001
@@ -148,7 +149,7 @@ object GitUtil {
      */
     fun listRevisionFiles(
         change: ChangeEntity,
-        patchSet: Map<String, Any>,
+        patchSet: PatchSetEntity,
         base: String? = null,
         parent: Int? = null,
         reviewed: Boolean? = null,
@@ -195,13 +196,13 @@ object GitUtil {
      */
     fun getFileContent(
         change: ChangeEntity,
-        patchSet: Map<String, Any>,
+        patchSet: PatchSetEntity,
         fileId: String
     ): String {
         return try {
             withRepository(change.projectName) { repository ->
                 // Get the revision ID from patch set
-                val revisionId = patchSet["revision"] as? String
+                val revisionId = patchSet.commitId
                     ?: throw IllegalArgumentException("No revision found in patch set")
                 
                 val revisionObjectId = ObjectId.fromString(revisionId)
@@ -235,7 +236,7 @@ object GitUtil {
             }
         } catch (e: Exception) {
             // Fallback to placeholder if Git operations fail
-            "// File: $fileId\n// Error retrieving content: ${e.message}\n// Change: ${change.changeKey}\n// Patch set: ${patchSet["patchSetNumber"]}"
+            "// File: $fileId\n// Error retrieving content: ${e.message}\n// Change: ${change.changeKey}\n// Patch set: ${patchSet.patchSetNumber}"
         }
     }
 
@@ -244,7 +245,7 @@ object GitUtil {
      */
     fun getFileDiff(
         change: ChangeEntity,
-        patchSet: Map<String, Any>,
+        patchSet: PatchSetEntity,
         fileId: String,
         base: String? = null,
         parent: Int? = null,
@@ -254,7 +255,7 @@ object GitUtil {
     ): DiffInfo {
         return try {
             withRepository(change.projectName) { repository ->
-                val revisionId = patchSet["revision"] as? String
+                val revisionId = patchSet.commitId
                     ?: throw IllegalArgumentException("No revision found in patch set")
                 
                 val git = Git(repository)
@@ -349,7 +350,7 @@ object GitUtil {
             }
         } catch (e: Exception) {
             // Fallback to placeholder if Git operations fail
-            val commitId = patchSet["revision"] as? String ?: "abc123"
+            val commitId = patchSet.commitId ?: "abc123"
             DiffInfo(
                 metaA = FileMeta(
                     commitId = commitId,
@@ -383,32 +384,37 @@ object GitUtil {
      * 
      * @param change The change entity
      * @param revisionId The revision identifier to validate
-     * @return The patch set data if found
+     * @return The patch set entity if found
      * @throws NotFoundException if revision is not found
      */
-    fun validateRevisionExists(change: ChangeEntity, revisionId: String): Map<String, Any> {
+    fun validateRevisionExists(change: ChangeEntity, revisionId: String): PatchSetEntity {
         return change.patchSets.find { patchSet ->
-            val revision = patchSet["revision"] as? String
-            revision == revisionId || patchSet["commitId"] == revisionId
+            val revision = patchSet.commitId
+            revision == revisionId || patchSet.commitId == revisionId
         } ?: throw NotFoundException("Revision $revisionId not found in change ${change.changeKey}")
     }
 
     /**
      * Extract commit information from a patch set.
      * 
-     * @param patchSet The patch set data
+     * @param patchSet The patch set entity
      * @return Commit information map
      */
-    fun extractCommitInfo(patchSet: Map<String, Any>): Map<String, Any> {
-        val commitId = patchSet["commitId"] as? String ?: "unknown"
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val createdOn = patchSet["createdOn"] as? String ?: "unknown"
+    fun extractCommitInfo(patchSet: PatchSetEntity): Map<String, Any> {
+        val commitId = patchSet.commitId ?: "unknown"
+        // TODO: Lookup user info by uploaderId from user service/repository
+        val uploaderMap = mapOf(
+            "id" to patchSet.uploaderId,
+            "name" to "User-${patchSet.uploaderId}", // Placeholder - should lookup from user service
+            "email" to "user${patchSet.uploaderId}@example.com" // Placeholder - should lookup from user service
+        )
+        val createdOn = patchSet.createdOn.toString()
         
         return mapOf(
             "commitId" to commitId,
             "uploader" to uploaderMap,
             "createdOn" to createdOn,
-            "revision" to (patchSet["revision"] ?: "unknown")
+            "revision" to (patchSet.commitId ?: "unknown")
         )
     }
 
@@ -419,10 +425,10 @@ object GitUtil {
      * @param patchSet The patch set data
      * @return Map of file paths to FileInfo objects
      */
-    fun getAllFilesInRevision(change: ChangeEntity, patchSet: Map<String, Any>): Map<String, FileInfo> {
+    fun getAllFilesInRevision(change: ChangeEntity, patchSet: PatchSetEntity): Map<String, FileInfo> {
         return try {
             withRepository(change.projectName) { repository ->
-                val revisionId = patchSet["revision"] as? String
+                val revisionId = patchSet.commitId
                     ?: throw IllegalArgumentException("No revision found in patch set")
                 
                 val revisionObjectId = ObjectId.fromString(revisionId)
@@ -543,10 +549,10 @@ object GitUtil {
      * @param base The base revision to compare against
      * @return Map of file paths to FileInfo objects
      */
-    fun getFilesComparedToBase(change: ChangeEntity, patchSet: Map<String, Any>, base: String): Map<String, FileInfo> {
+    fun getFilesComparedToBase(change: ChangeEntity, patchSet: PatchSetEntity, base: String): Map<String, FileInfo> {
         return try {
             withRepository(change.projectName) { repository ->
-                val revisionId = patchSet["revision"] as? String
+                val revisionId = patchSet.commitId
                     ?: throw IllegalArgumentException("No revision found in patch set")
                 
                 val revisionObjectId = ObjectId.fromString(revisionId)
@@ -652,10 +658,10 @@ object GitUtil {
      * @param parent The parent number to compare against
      * @return Map of file paths to FileInfo objects
      */
-    fun getFilesComparedToParent(change: ChangeEntity, patchSet: Map<String, Any>, parent: Int): Map<String, FileInfo> {
+    fun getFilesComparedToParent(change: ChangeEntity, patchSet: PatchSetEntity, parent: Int): Map<String, FileInfo> {
         return try {
             withRepository(change.projectName) { repository ->
-                val revisionId = patchSet["revision"] as? String
+                val revisionId = patchSet.commitId
                     ?: throw IllegalArgumentException("No revision found in patch set")
                 
                 val revisionObjectId = ObjectId.fromString(revisionId)

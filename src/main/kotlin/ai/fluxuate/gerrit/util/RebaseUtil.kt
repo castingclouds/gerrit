@@ -91,14 +91,14 @@ class RebaseUtil(
             try {
                 val git = Git(repository)
                 
-                // Get the latest patch set revision
+                // Get the latest patch set from the change
                 val latestPatchSet = change.patchSets.lastOrNull()
                 if (latestPatchSet == null) {
                     logger.warn("No patch sets found for change ${change.changeKey}")
                     return change.copy(lastUpdatedOn = Instant.now())
                 }
                 
-                val revisionId = latestPatchSet["revisionId"] as? String
+                val revisionId = latestPatchSet.commitId
                 if (revisionId.isNullOrBlank()) {
                     logger.warn("No revision ID found in latest patch set for change ${change.changeKey}")
                     return change.copy(lastUpdatedOn = Instant.now())
@@ -175,7 +175,7 @@ class RebaseUtil(
                     )
                 }
                 
-                val revisionId = latestPatchSet["revisionId"] as? String
+                val revisionId = latestPatchSet.commitId
                 if (revisionId.isNullOrBlank()) {
                     logger.warn("No revision ID found in latest patch set for change ${change.changeKey}")
                     return change.copy(
@@ -257,7 +257,7 @@ class RebaseUtil(
         
         // Get the actual commit ID from the patch set data
         val patchSet = patchUtil.validateRevisionExists(change, revisionId)
-        val actualCommitId = patchSet["commitId"] as? String 
+        val actualCommitId = patchSet.commitId 
             ?: throw ConflictException("No commit ID found for revision $revisionId")
             
         logger.info("Performing revision rebase for change ${change.changeKey}, revision $revisionId (commit: $actualCommitId)")
@@ -348,7 +348,7 @@ class RebaseUtil(
         
         // Get the actual commit ID from the patch set data
         val patchSet = patchUtil.validateRevisionExists(change, revisionId)
-        val actualCommitId = patchSet["commitId"] as? String 
+        val actualCommitId = patchSet.commitId 
             ?: throw ConflictException("No commit ID found for revision $revisionId")
             
         logger.info("Performing revision submit for change ${change.changeKey}, revision $revisionId (commit: $actualCommitId)")

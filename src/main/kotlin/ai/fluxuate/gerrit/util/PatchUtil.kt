@@ -1,6 +1,7 @@
 package ai.fluxuate.gerrit.util
 
 import ai.fluxuate.gerrit.model.ChangeEntity
+import ai.fluxuate.gerrit.model.PatchSetEntity
 import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.NotFoundException
 import ai.fluxuate.gerrit.config.ServerConfiguration
@@ -21,11 +22,11 @@ class PatchUtil(
     /**
      * Find a patch set by revision ID.
      * 
-     * @param change The change entity containing patch sets
+     * @param change The change entity
      * @param revisionId The revision ID to find (can be "current", patch set number, or commit/revision hash)
-     * @return The patch set map if found, null otherwise
+     * @return The patch set entity if found, null otherwise
      */
-    fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): Map<String, Any>? {
+    fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): PatchSetEntity? {
         return when {
             revisionId == "current" -> {
                 // Return the current (latest) patch set
@@ -39,8 +40,8 @@ class PatchUtil(
             else -> {
                 // Revision ID is a commit ID or revision hash
                 change.patchSets.find { patchSet ->
-                    val commitId = patchSet["commitId"] as? String
-                    val revision = patchSet["revision"] as? String
+                    val commitId = patchSet.commitId
+                    val revision = patchSet.commitId // Note: revision and commitId are the same field
                     (commitId != null && commitId.startsWith(revisionId)) ||
                     (revision != null && revision.startsWith(revisionId))
                 }
@@ -49,27 +50,25 @@ class PatchUtil(
     }
 
     /**
-     * Convert patch set map to RevisionInfo DTO.
+     * Convert patch set entity to RevisionInfo DTO.
      * 
-     * @param patchSet The patch set map to convert
+     * @param patchSet The patch set entity to convert
      * @param change The change entity containing the patch set
      * @return RevisionInfo DTO
      */
-    fun convertPatchSetToRevisionInfo(patchSet: Map<String, Any>, change: ChangeEntity): RevisionInfo {
-        // Use uploader as both author and committer since that's what we have in test data
-        @Suppress("UNCHECKED_CAST")
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val createdOn = patchSet["createdOn"] as? String ?: change.createdOn.toString()
+    fun convertPatchSetToRevisionInfo(patchSet: PatchSetEntity, change: ChangeEntity): RevisionInfo {
+        // Use uploader info from patch set entity
+        val createdOn = patchSet.createdOn.toString()
         
         return RevisionInfo(
             kind = "REWORK", // TODO: Determine actual change kind
             _number = change.patchSets.indexOf(patchSet) + 1,
             created = Instant.parse(createdOn),
             uploader = AccountInfo(
-                _account_id = (uploaderMap["_account_id"] as? Number)?.toLong() ?: change.ownerId.toLong(),
-                name = uploaderMap["name"] as? String,
-                email = uploaderMap["email"] as? String,
-                username = uploaderMap["username"] as? String
+                _account_id = patchSet.uploaderId.toLong(),
+                name = null, // TODO: Implement user lookup for uploader name
+                email = null, // TODO: Implement user lookup for uploader email
+                username = null // TODO: Implement user lookup for uploader username
             ),
             ref = "refs/changes/${change.id.toString().takeLast(2).padStart(2, '0')}/${change.id}/${change.patchSets.indexOf(patchSet) + 1}",
             fetch = mapOf(
@@ -79,38 +78,36 @@ class PatchUtil(
                 )
             ),
             commit = convertPatchSetToCommitInfo(patchSet, change),
-            description = patchSet["description"] as? String
+            description = null // TODO: Add description field to PatchSetEntity if needed
         )
     }
 
     /**
-     * Convert patch set map to CommitInfo DTO.
+     * Convert patch set entity to CommitInfo DTO.
      * 
-     * @param patchSet The patch set map to convert
+     * @param patchSet The patch set entity to convert
      * @param change The change entity containing the patch set
      * @return CommitInfo DTO
      */
-    fun convertPatchSetToCommitInfo(patchSet: Map<String, Any>, change: ChangeEntity): CommitInfo {
-        val commitId = patchSet["commitId"] as? String ?: "unknown"
-        // Use uploader as both author and committer since that's what we have in test data
-        @Suppress("UNCHECKED_CAST")
-        val uploaderMap = patchSet["uploader"] as? Map<String, Any> ?: emptyMap()
-        val subject = patchSet["subject"] as? String ?: change.subject
-        val message = patchSet["message"] as? String ?: subject
-        val createdOn = patchSet["createdOn"] as? String ?: change.createdOn.toString()
+    fun convertPatchSetToCommitInfo(patchSet: PatchSetEntity, change: ChangeEntity): CommitInfo {
+        val commitId = patchSet.commitId ?: "unknown"
+        // Use uploader info from patch set entity
+        val subject = change.subject // TODO: Add subject field to PatchSetEntity if needed
+        val message = subject // TODO: Add message field to PatchSetEntity if needed
+        val createdOn = patchSet.createdOn.toString()
         
         return CommitInfo(
             commit = commitId,
             parents = emptyList(), // TODO: Extract parent commits
             author = GitPersonInfo(
-                name = uploaderMap["name"] as? String ?: "Unknown Author",
-                email = uploaderMap["email"] as? String ?: "unknown@example.com",
+                name = "User-${patchSet.uploaderId}", // TODO: Implement user lookup for author name
+                email = "user${patchSet.uploaderId}@example.com", // TODO: Implement user lookup for author email
                 date = Instant.parse(createdOn),
                 tz = 0 // UTC timezone offset
             ),
             committer = GitPersonInfo(
-                name = uploaderMap["name"] as? String ?: "Unknown Committer", 
-                email = uploaderMap["email"] as? String ?: "unknown@example.com",
+                name = "User-${patchSet.uploaderId}", // TODO: Implement user lookup for committer name
+                email = "user${patchSet.uploaderId}@example.com", // TODO: Implement user lookup for committer email
                 date = Instant.parse(createdOn),
                 tz = 0 // UTC timezone offset
             ),
@@ -128,9 +125,9 @@ class PatchUtil(
     fun convertPatchSetsToRevisionInfoMap(change: ChangeEntity): Map<String, RevisionInfo> {
         val patchSets = change.patchSets
         
-        return patchSets.mapIndexed { index, patchSetMap ->
-            val revisionId = patchSetMap["revision"] as? String ?: "revision-${index + 1}"
-            val revisionInfo = convertPatchSetToRevisionInfo(patchSetMap, change)
+        return patchSets.mapIndexed { index, patchSetEntity ->
+            val revisionId = patchSetEntity.commitId ?: "revision-${index + 1}"
+            val revisionInfo = convertPatchSetToRevisionInfo(patchSetEntity, change)
             revisionId to revisionInfo
         }.toMap()
     }
@@ -141,7 +138,7 @@ class PatchUtil(
      * @param change The change entity
      * @return The current patch set map, or null if no patch sets exist
      */
-    fun getCurrentPatchSet(change: ChangeEntity): Map<String, Any>? {
+    fun getCurrentPatchSet(change: ChangeEntity): PatchSetEntity? {
         return change.patchSets.lastOrNull()
     }
 
@@ -152,18 +149,18 @@ class PatchUtil(
      * @param patchSetNumber The patch set number (1-indexed)
      * @return The patch set map if found, null otherwise
      */
-    fun getPatchSetByNumber(change: ChangeEntity, patchSetNumber: Int): Map<String, Any>? {
+    fun getPatchSetByNumber(change: ChangeEntity, patchSetNumber: Int): PatchSetEntity? {
         return change.patchSets.getOrNull(patchSetNumber - 1)
     }
 
     /**
-     * Get the patch set number for a given patch set map.
+     * Get the patch set number for a given patch set entity.
      * 
      * @param change The change entity containing the patch set
-     * @param patchSet The patch set map
+     * @param patchSet The patch set entity
      * @return The 1-indexed patch set number
      */
-    fun getPatchSetNumber(change: ChangeEntity, patchSet: Map<String, Any>): Int {
+    fun getPatchSetNumber(change: ChangeEntity, patchSet: PatchSetEntity): Int {
         return change.patchSets.indexOf(patchSet) + 1
     }
 
@@ -181,14 +178,14 @@ class PatchUtil(
     }
 
     /**
-     * Validate that a revision exists for a change.
+     * Validate that a revision exists and return the patch set.
      * 
      * @param change The change entity
      * @param revisionId The revision ID to validate
-     * @return The patch set map if found
+     * @return The patch set entity if found
      * @throws NotFoundException if revision not found
      */
-    fun validateRevisionExists(change: ChangeEntity, revisionId: String): Map<String, Any> {
+    fun validateRevisionExists(change: ChangeEntity, revisionId: String): PatchSetEntity {
         return findPatchSetByRevisionId(change, revisionId)
             ?: throw NotFoundException("Revision $revisionId not found in change ${change.id}")
     }

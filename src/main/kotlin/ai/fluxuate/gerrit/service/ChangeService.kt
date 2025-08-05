@@ -9,7 +9,9 @@ import ai.fluxuate.gerrit.util.ReviewersUtil
 import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
+import ai.fluxuate.gerrit.model.PatchSetEntity
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
+import ai.fluxuate.gerrit.repository.PatchSetRepository
 import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.NotFoundException
 import ai.fluxuate.gerrit.api.exception.BadRequestException
@@ -33,6 +35,7 @@ import kotlin.random.Random
 @Service
 class ChangeService(
     private val changeRepository: ChangeEntityRepository,
+    private val patchSetRepository: PatchSetRepository,
     private val accountService: AccountService,
     private val rebaseUtil: RebaseUtil,
     private val patchUtil: PatchUtil,
@@ -213,16 +216,7 @@ class ChangeService(
             val subject = extractSubject(commit.fullMessage)
             val now = Instant.now()
             
-            // Create initial patch set
-            val patchSet = mapOf(
-                "id" to 1,
-                "commitId" to commitObjectId.name,
-                "uploader_id" to ownerId,
-                "createdOn" to now.toString(),
-                "description" to "Initial patch set",
-                "isDraft" to false
-            )
-            
+            // First, create and save the ChangeEntity without patch sets
             val change = ChangeEntity(
                 changeKey = changeId,
                 ownerId = ownerId,
@@ -232,11 +226,23 @@ class ChangeService(
                 status = ChangeStatus.NEW,
                 currentPatchSetId = 1,
                 createdOn = now,
-                lastUpdatedOn = now,
-                patchSets = listOf(patchSet)
+                lastUpdatedOn = now
             )
             
             val savedChange = changeRepository.save(change)
+            
+            // Now create the initial patch set with reference to the saved change
+            val patchSet = PatchSetEntity(
+                change = savedChange,
+                patchSetNumber = 1,
+                commitId = commitObjectId.name,
+                uploaderId = ownerId.toLong(),
+                realUploaderId = ownerId.toLong(),
+                createdOn = now,
+                description = "Initial patch set"
+            )
+            
+            patchSetRepository.save(patchSet)
             
             logger.info("Created new change: ${savedChange.id} with Change-Id: $changeId")
             
@@ -284,29 +290,29 @@ class ChangeService(
             
             val newPatchSetId = existingChange.currentPatchSetId + 1
             val now = Instant.now()
-            
-            // Create new patch set
-            val newPatchSet = mapOf(
-                "id" to newPatchSetId,
-                "commitId" to commitObjectId.name,
-                "uploader_id" to ownerId,
-                "createdOn" to now.toString(),
-                "description" to "Patch Set $newPatchSetId",
-                "isDraft" to false
-            )
-            
-            // Update the change with new patch set
-            val updatedPatchSets = existingChange.patchSets + newPatchSet
             val updatedSubject = extractSubject(commit.fullMessage)
             
+            // First, update the change without patchSets
             val updatedChange = existingChange.copy(
                 subject = updatedSubject,
                 currentPatchSetId = newPatchSetId,
-                lastUpdatedOn = now,
-                patchSets = updatedPatchSets
+                lastUpdatedOn = now
             )
             
             val savedChange = changeRepository.save(updatedChange)
+            
+            // Now create the new patch set with reference to the updated change
+            val newPatchSet = PatchSetEntity(
+                change = savedChange,
+                patchSetNumber = newPatchSetId,
+                commitId = commitObjectId.name,
+                uploaderId = ownerId.toLong(),
+                realUploaderId = ownerId.toLong(),
+                createdOn = now,
+                description = "Patch Set $newPatchSetId"
+            )
+            
+            patchSetRepository.save(newPatchSet)
             
             logger.info("Updated change ${savedChange.id} with new patch set $newPatchSetId")
             
@@ -399,10 +405,10 @@ class ChangeService(
             val change = changeRepository.findById(changeId).orElseThrow {
                 RuntimeException("Change $changeId not found")
             }
-            val patchSet = change.patchSets.find { it["id"] == patchSetId }
+            val patchSet = change.patchSets.find { it.patchSetNumber == patchSetId }
                 ?: throw RuntimeException("Patch set $patchSetId not found in change $changeId")
             
-            val commitSha = patchSet["commitId"] as String
+            val commitSha = patchSet.commitId
             
             // Get the repository to delete the virtual branch
             val repository = gitRepositoryService.openRepository(projectName)
@@ -448,8 +454,8 @@ class ChangeService(
                 val patchSets = change.patchSets
                 
                 for (patchSet in patchSets) {
-                    val patchSetId = patchSet["id"] as Int
-                    val commitId = patchSet["commitId"] as String
+                    val patchSetId = patchSet.patchSetNumber
+                    val commitId = patchSet.commitId
                     
                     // Validate that the commit exists in the repository
                     val repository = gitRepositoryService.openRepository(projectName)
@@ -1090,7 +1096,7 @@ class ChangeService(
         zip: Boolean = false
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
         return GitUtil.generateRevisionPatch(change, patchSet, revisionId, zip)
     }
 
@@ -1113,7 +1119,7 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevision(changeId: String, revisionId: String): RevisionInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
         return patchUtil.convertPatchSetToRevisionInfo(patchSet, change)
     }
 
@@ -1134,7 +1140,7 @@ class ChangeService(
     @Transactional(readOnly = true)
     fun getRevisionCommit(changeId: String, revisionId: String): CommitInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = GitUtil.validateRevisionExists(change, revisionId)
         
         return patchUtil.convertPatchSetToCommitInfo(patchSet, change)
     }
@@ -1606,22 +1612,22 @@ class ChangeService(
 
     // ===== HELPER METHODS FOR FILES =====
 
-    private fun getAllFilesInRevision(change: ChangeEntity, patchSet: Map<String, Any>): Map<String, FileInfo> {
+    private fun getAllFilesInRevision(change: ChangeEntity, patchSet: PatchSetEntity): Map<String, FileInfo> {
         return GitUtil.getAllFilesInRevision(change, patchSet)
     }
 
-    private fun getFilesComparedToBase(change: ChangeEntity, patchSet: Map<String, Any>, base: String): Map<String, FileInfo> {
+    private fun getFilesComparedToBase(change: ChangeEntity, patchSet: PatchSetEntity, base: String): Map<String, FileInfo> {
         return GitUtil.getFilesComparedToBase(change, patchSet, base)
     }
 
-    private fun getFilesComparedToParent(change: ChangeEntity, patchSet: Map<String, Any>, parent: Int): Map<String, FileInfo> {
+    private fun getFilesComparedToParent(change: ChangeEntity, patchSet: PatchSetEntity, parent: Int): Map<String, FileInfo> {
         return GitUtil.getFilesComparedToParent(change, patchSet, parent)
     }
 
     /**
      * Find a patch set by revision ID.
      */
-    private fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): Map<String, Any>? {
+    private fun findPatchSetByRevisionId(change: ChangeEntity, revisionId: String): PatchSetEntity? {
         return when {
             revisionId == "current" -> {
                 // Return the current (latest) patch set
@@ -1630,15 +1636,12 @@ class ChangeService(
             revisionId.matches(Regex("\\d+")) -> {
                 // Revision ID is a patch set number
                 val patchSetNumber = revisionId.toInt()
-                change.patchSets.getOrNull(patchSetNumber - 1)
+                change.patchSets.find { it.patchSetNumber == patchSetNumber }
             }
             else -> {
                 // Revision ID is a commit ID or revision hash
                 change.patchSets.find { patchSet ->
-                    val commitId = patchSet["commitId"] as? String
-                    val revision = patchSet["revision"] as? String
-                    (commitId != null && commitId.startsWith(revisionId)) ||
-                    (revision != null && revision.startsWith(revisionId))
+                    patchSet.commitId.startsWith(revisionId)
                 }
             }
         }
