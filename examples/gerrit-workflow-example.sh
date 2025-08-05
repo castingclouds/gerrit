@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Gerrit Workflow Example Script
+# Gerrit Workflow Example Script - Trunk-Based Development
 #
-# This script demonstrates the basic Gerrit workflow using Git commands.
-# It shows how to create changes, update them, and submit them using the
-# refs/for virtual branch mechanism.
+# This script demonstrates the proper Gerrit workflow using trunk-based development.
+# Developers work directly on the trunk branch and use refs/for/trunk for code review.
+# No feature branches are created - all work happens on trunk.
 #
 # Prerequisites:
 # - Git installed
@@ -15,8 +15,9 @@ set -e  # Exit on error
 
 # Configuration
 GERRIT_URL="http://localhost:8080"  # Replace with your Gerrit URL
+GERRIT_SSH_HOST="localhost:29418"   # SSH host and port
 PROJECT_NAME="example-project"      # Replace with your project name
-BRANCH="trunk"                      # The target branch
+BRANCH="trunk"                      # The target branch (trunk-based development)
 
 # Step 1: Clone the repository
 echo "Step 1: Cloning the repository..."
@@ -31,14 +32,18 @@ fi
 # Step 2: Install the commit-msg hook if not already installed
 echo "Step 2: Installing commit-msg hook..."
 if [ ! -f ".git/hooks/commit-msg" ]; then
+    echo "Downloading commit-msg hook from $GERRIT_URL/tools/hooks/commit-msg"
     curl -Lo .git/hooks/commit-msg "$GERRIT_URL/tools/hooks/commit-msg"
     chmod +x .git/hooks/commit-msg
+    echo "Commit-msg hook installed successfully"
+else
+    echo "Commit-msg hook already installed"
 fi
 
-# Step 3: Create a local branch for your change
-echo "Step 3: Creating a local branch..."
-CHANGE_BRANCH="feature-$(date +%Y%m%d-%H%M%S)"
-git checkout -b "$CHANGE_BRANCH" origin/$BRANCH
+# Step 3: Ensure we're on the trunk branch (trunk-based development)
+echo "Step 3: Ensuring we're on the trunk branch..."
+git checkout $BRANCH
+git pull origin $BRANCH
 
 # Step 4: Make changes to the code
 echo "Step 4: Making changes..."
@@ -49,12 +54,21 @@ git add example.txt
 echo "Step 5: Committing changes..."
 git commit -m "Add example change
 
-This is an example change to demonstrate the Gerrit workflow.
+This is an example change to demonstrate the trunk-based Gerrit workflow.
 The commit-msg hook will automatically add a Change-Id."
 
 # Step 6: Push the change to refs/for/trunk for review
-echo "Step 6: Pushing to refs/for/$BRANCH..."
-git push origin HEAD:refs/for/$BRANCH
+echo "Step 6: Pushing to refs/for/$BRANCH for code review..."
+echo "You can push using either HTTP or SSH:"
+echo ""
+echo "HTTP (recommended for most users):"
+echo "  git push http://$GERRIT_URL/git/$PROJECT_NAME HEAD:refs/for/$BRANCH"
+echo ""
+echo "SSH (for advanced users):"
+echo "  git push ssh://$GERRIT_SSH_HOST/$PROJECT_NAME HEAD:refs/for/$BRANCH"
+echo ""
+echo "Using HTTP method:"
+git push http://$GERRIT_URL/git/$PROJECT_NAME HEAD:refs/for/$BRANCH
 
 # The Change-Id will be preserved in the commit message
 CHANGE_ID=$(git log -1 --pretty=%B | grep -o "Change-Id: I[0-9a-f]\{40\}" | cut -d' ' -f2)
@@ -65,13 +79,13 @@ echo "Step 7: Making additional changes for a new patchset..."
 echo "// Additional changes - $(date)" >> example.txt
 git add example.txt
 
-# Step 8: Amend the commit
+# Step 8: Amend the commit (preserves Change-Id)
 echo "Step 8: Amending the commit..."
 git commit --amend --no-edit
 
 # Step 9: Push the updated change to refs/for/trunk
 echo "Step 9: Pushing updated change to refs/for/$BRANCH..."
-git push origin HEAD:refs/for/$BRANCH
+git push http://$GERRIT_URL/git/$PROJECT_NAME HEAD:refs/for/$BRANCH
 
 echo "Updated change with Change-Id: $CHANGE_ID"
 
@@ -86,33 +100,68 @@ git rebase origin/$BRANCH
 
 # Step 12: Push the rebased change
 echo "Step 12: Pushing rebased change..."
-git push origin HEAD:refs/for/$BRANCH -f
+git push http://$GERRIT_URL/git/$PROJECT_NAME HEAD:refs/for/$BRANCH -f
 
 echo "Rebased change with Change-Id: $CHANGE_ID"
 
-# Step 13: Demonstrate cherry-picking a change to another branch
-echo "Step 13: Cherry-picking to another branch..."
-OTHER_BRANCH="release"
-git fetch origin $OTHER_BRANCH
-git checkout -b cherry-pick-to-$OTHER_BRANCH origin/$OTHER_BRANCH
-git cherry-pick $CHANGE_BRANCH
+# Step 13: Demonstrate working on another change while first is in review
+echo "Step 13: Working on another change while first is in review..."
+echo "// Second change - $(date)" >> example2.txt
+git add example2.txt
 
-# Step 14: Push the cherry-picked change
-echo "Step 14: Pushing cherry-picked change..."
-git push origin HEAD:refs/for/$OTHER_BRANCH
+git commit -m "Add second example change
 
-# The cherry-picked commit will have a new Change-Id
-NEW_CHANGE_ID=$(git log -1 --pretty=%B | grep -o "Change-Id: I[0-9a-f]\{40\}" | cut -d' ' -f2)
-echo "Cherry-picked change with new Change-Id: $NEW_CHANGE_ID"
+This demonstrates working on multiple changes simultaneously
+in a trunk-based workflow."
+
+git push http://$GERRIT_URL/git/$PROJECT_NAME HEAD:refs/for/$BRANCH
+
+SECOND_CHANGE_ID=$(git log -1 --pretty=%B | grep -o "Change-Id: I[0-9a-f]\{40\}" | cut -d' ' -f2)
+echo "Second change created with Change-Id: $SECOND_CHANGE_ID"
+
+# Step 14: Demonstrate direct push to trunk (after approval)
+echo "Step 14: Demonstrating direct push to trunk (after approval)..."
+echo "Note: This would only be done after the change is approved in Gerrit."
+echo "Direct push to trunk requires a valid Change-Id in the commit message."
+
+# Step 15: Show how to fetch and work on a specific change
+echo "Step 15: Fetching and working on a specific change..."
+echo "To work on a specific change from Gerrit:"
+echo ""
+echo "HTTP:"
+echo "  git fetch http://$GERRIT_URL/git/$PROJECT_NAME refs/changes/12/$CHANGE_ID/1"
+echo "  git checkout FETCH_HEAD"
+echo ""
+echo "SSH:"
+echo "  git fetch ssh://$GERRIT_SSH_HOST/$PROJECT_NAME refs/changes/12/$CHANGE_ID/1"
+echo "  git checkout FETCH_HEAD"
+echo ""
+echo "Virtual branches (refs/changes/XX/CHANGEID/PATCHSET) are automatically advertised"
+echo "by both HTTP and SSH protocols, allowing you to fetch specific changes for review."
+
+# Step 16: Demonstrate cleanup
+echo "Step 16: Cleaning up local changes..."
+git reset --hard origin/$BRANCH
+git clean -fd
 
 echo "Workflow example completed successfully!"
-echo "This script demonstrated:"
-echo "1. Creating a change and pushing to refs/for/$BRANCH"
-echo "2. Updating the change with a new patchset"
-echo "3. Rebasing the change on the latest trunk"
-echo "4. Cherry-picking the change to another branch"
+echo ""
+echo "This script demonstrated trunk-based development:"
+echo "1. Working directly on the trunk branch"
+echo "2. Creating changes and pushing to refs/for/trunk for review"
+echo "3. Updating changes with new patchsets"
+echo "4. Rebasing changes on the latest trunk"
+echo "5. Working on multiple changes simultaneously"
+echo ""
+echo "Key principles of trunk-based development:"
+echo "- No feature branches are created"
+echo "- All work happens on the trunk branch"
+echo "- Changes are reviewed via refs/for/trunk"
+echo "- Multiple changes can be worked on simultaneously"
+echo "- Changes are merged directly to trunk after approval"
 echo ""
 echo "In a real workflow, you would also:"
 echo "- Wait for reviews and approvals in the Gerrit UI"
 echo "- Submit the change through the Gerrit UI or using the 'git review' command"
-echo "- Handle merge conflicts if they occur during rebase or cherry-pick"
+echo "- Handle merge conflicts if they occur during rebase"
+echo "- Use the Gerrit web interface to manage the review process"

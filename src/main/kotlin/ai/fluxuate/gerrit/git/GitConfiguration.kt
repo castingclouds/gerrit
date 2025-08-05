@@ -57,6 +57,10 @@ class GitConfiguration {
     @field:NotNull
     var fetchTimeoutSeconds: Long = 300
 
+    // Trunk Branch Configuration
+    @field:NotBlank
+    var trunkBranchName: String = "trunk"
+
     // ReceivePack Configuration
     @field:NotNull
     var allowCreates: Boolean = true

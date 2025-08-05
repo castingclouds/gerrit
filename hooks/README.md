@@ -5,7 +5,6 @@ This directory contains Git hooks for use with the Gerrit Code Review system.
 ## Available Hooks
 
 - `commit-msg`: Automatically adds a Change-Id to commit messages (client-side)
-- `pre-receive`: Validates that all incoming commits have valid Change-Ids (server-side)
 
 ## Installation Instructions
 
@@ -84,45 +83,6 @@ If the hook isn't adding Change-Ids to your commits:
    You should see the hook being executed in the trace output.
 
 3. If you're using a GUI Git client, make sure it's configured to use Git hooks.
-
-### pre-receive Hook
-
-The `pre-receive` hook validates that all incoming commits have valid Change-Ids. This server-side hook provides an additional layer of enforcement for the Gerrit workflow, ensuring that even if developers forget to install the client-side hook, their commits will be rejected if they don't have valid Change-Ids.
-
-#### Installation Steps
-
-1. Make the hook executable:
-   ```bash
-   chmod +x hooks/pre-receive
-   ```
-
-2. Install the hook in your Git repository on the server:
-   ```bash
-   cp hooks/pre-receive /path/to/your/repo.git/hooks/
-   ```
-
-   For repositories managed by Gerrit, you'll need to place this in the appropriate hooks directory for your Gerrit installation.
-
-#### Behavior
-
-The pre-receive hook:
-
-1. Checks each incoming commit to verify it has a valid Change-ID
-2. Skips validation for special commits:
-   - Merge commits
-   - Commits with prefixes like "Revert", "Automated:", or "CI:"
-3. Handles different types of Git references:
-   - For pushes to `refs/for/` (virtual branches), it allows the Gerrit workflow to handle them
-   - For pushes to `refs/heads/` (regular branches), it enforces Change-ID validation
-   - For other refs (tags, notes, etc.), it skips validation
-
-#### Customization
-
-You can customize the hook to fit your specific workflow:
-
-- Modify the special prefixes that are exempted from Change-ID validation
-- Adjust the validation rules for different types of references
-- Change the error messages to provide more specific guidance for your team
 
 ## Workflow Integration
 

@@ -6,6 +6,7 @@ import ai.fluxuate.gerrit.util.GitUtil
 import ai.fluxuate.gerrit.util.PatchUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
 import ai.fluxuate.gerrit.util.ReviewersUtil
+import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
@@ -15,6 +16,7 @@ import ai.fluxuate.gerrit.api.exception.BadRequestException
 import ai.fluxuate.gerrit.api.exception.ConflictException
 import ai.fluxuate.gerrit.api.exception.UnauthorizedException
 import org.eclipse.jgit.lib.ObjectId
+import org.eclipse.jgit.lib.RefUpdate
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevWalk
@@ -34,7 +36,8 @@ class ChangeService(
     private val accountService: AccountService,
     private val rebaseUtil: RebaseUtil,
     private val patchUtil: PatchUtil,
-    private val reviewersUtil: ReviewersUtil
+    private val reviewersUtil: ReviewersUtil,
+    private val gitRepositoryService: GitRepositoryService
 ) {
     
     private val logger = LoggerFactory.getLogger(ChangeService::class.java)
@@ -120,7 +123,7 @@ class ChangeService(
                 val existingChange = changeRepository.findByChangeKey(changeId)
                 
                 return if (existingChange != null) {
-                    updateExistingChange(existingChange, commit, newObjectId, targetBranch, ownerId)
+                    updateExistingChange(existingChange, commit, newObjectId, targetBranch, ownerId, projectName)
                 } else {
                     createNewChange(changeId, commit, newObjectId, projectName, targetBranch, ownerId)
                 }
@@ -134,27 +137,36 @@ class ChangeService(
     
     /**
      * Process a change (create or update) based on Change-Id and commit.
-     * This is a simplified version of processRefsForPush for SSH command usage.
+     * This handles trunk branch direct pushes where the commit SHA is used as the Change-Id.
      */
     fun processChange(
         changeId: String,
         commit: RevCommit,
         targetBranch: String,
-        repository: Repository
+        repository: Repository,
+        projectName: String
     ): ProcessResult {
-        // For now, delegate to processRefsForPush with default values
-        // In a full implementation, this would extract more context from the SSH session
-        val projectName = repository.directory.parentFile?.name ?: "unknown"
-        val ownerId = 1 // This should come from authenticated user context
-        
-        return processRefsForPush(
-            repository = repository,
-            refName = "refs/for/$targetBranch",
-            oldObjectId = null,
-            newObjectId = commit.id,
-            projectName = projectName,
-            ownerId = ownerId
-        )
+        try {
+            val ownerId = 1 // This should come from authenticated user context
+            
+            logger.info("Processing trunk branch direct push: commit ${commit.id.name} to $targetBranch for project $projectName")
+            
+            // For trunk branch direct pushes, we use the commit SHA as the Change-Id
+            // and bypass the Change-Id extraction from commit message
+            
+            // Check if this is a new change or update to existing change
+            val existingChange = changeRepository.findByChangeKey(changeId)
+            
+            return if (existingChange != null) {
+                updateExistingChange(existingChange, commit, commit.id, targetBranch, ownerId, projectName)
+            } else {
+                createNewChange(changeId, commit, commit.id, projectName, targetBranch, ownerId)
+            }
+            
+        } catch (e: Exception) {
+            logger.error("Error processing trunk branch push for commit ${commit.id.name}", e)
+            return ProcessResult(success = false, message = "Error processing trunk branch push: ${e.message}")
+        }
     }
     
     /**
@@ -228,6 +240,9 @@ class ChangeService(
             
             logger.info("Created new change: ${savedChange.id} with Change-Id: $changeId")
             
+            // Create the virtual branch in the Git repository
+            createVirtualBranch(changeId, 1, commitObjectId, projectName)
+            
             return ProcessResult.success(
                 "Created new change ${savedChange.id}",
                 savedChange.id,
@@ -248,7 +263,8 @@ class ChangeService(
         commit: RevCommit,
         commitObjectId: ObjectId,
         targetBranch: String,
-        ownerId: Int
+        ownerId: Int,
+        projectName: String
     ): ProcessResult {
         try {
             // Validate that the target branch matches
@@ -294,6 +310,9 @@ class ChangeService(
             
             logger.info("Updated change ${savedChange.id} with new patch set $newPatchSetId")
             
+            // Create the virtual branch in the Git repository
+            createVirtualBranch(existingChange.changeKey, newPatchSetId, commitObjectId, projectName)
+            
             return ProcessResult.success(
                 "Updated change ${savedChange.id} with patch set $newPatchSetId",
                 savedChange.id,
@@ -319,12 +338,142 @@ class ChangeService(
     }
     
     /**
-     * Generate virtual ref name for a change patch set.
-     * Format: refs/changes/XX/CHANGEID/PATCHSET
+     * Generate virtual ref name for a change patch set using standard Gerrit format.
+     * Format: refs/changes/XX/CHANGEID_HASH/PATCHSET
+     * Where XX is the last 2 characters of the Change-Id hash (without 'I' prefix)
+     * and CHANGEID_HASH is the full Change-Id hash (without 'I' prefix).
      */
-    fun generateVirtualRef(changeId: Int, patchSetId: Int): String {
-        val lastTwoDigits = String.format("%02d", changeId % 100)
-        return "refs/changes/$lastTwoDigits/$changeId/$patchSetId"
+    fun generateVirtualRef(changeIdHash: String, patchSetId: Int): String {
+        // Remove 'I' prefix if present
+        val hash = if (changeIdHash.startsWith("I")) changeIdHash.substring(1) else changeIdHash
+        val lastTwoChars = hash.takeLast(2)
+        return "refs/changes/$lastTwoChars/$hash/$patchSetId"
+    }
+    
+    /**
+     * Create a virtual branch in the Git repository.
+     * This creates the actual refs/changes/XX/CHANGEID_HASH/PATCHSET reference.
+     */
+    private fun createVirtualBranch(changeIdHash: String, patchSetId: Int, commitId: ObjectId, projectName: String) {
+        try {
+            val virtualRefName = generateVirtualRef(changeIdHash, patchSetId)
+            logger.info("Creating virtual branch: $virtualRefName -> ${commitId.name}")
+            
+            // Get the repository service to create the ref
+            val repository = gitRepositoryService.openRepository(projectName)
+            try {
+                val refUpdate = repository.updateRef(virtualRefName)
+                refUpdate.setNewObjectId(commitId)
+                refUpdate.setForceUpdate(true) // Virtual branches can be force-updated
+                
+                val result = refUpdate.update()
+                when (result) {
+                    RefUpdate.Result.NEW,
+                    RefUpdate.Result.FAST_FORWARD,
+                    RefUpdate.Result.FORCED -> {
+                        logger.info("Successfully created virtual branch: $virtualRefName")
+                    }
+                    else -> {
+                        logger.warn("Failed to create virtual branch: $virtualRefName, result: $result")
+                        throw RuntimeException("Failed to create virtual branch: $result")
+                    }
+                }
+            } finally {
+                repository.close()
+            }
+            
+        } catch (e: Exception) {
+            logger.error("Error creating virtual branch for commit ${commitId.name}, patch set $patchSetId", e)
+            // Don't throw here - virtual branch creation failure shouldn't fail the entire change creation
+            // The change and patch set are already saved in the database
+        }
+    }
+    
+    /**
+     * Delete a virtual branch from the Git repository.
+     * This is called when a change is abandoned or merged.
+     */
+    fun deleteVirtualBranch(changeId: Int, patchSetId: Int, projectName: String) {
+        try {
+            // Look up the patch set to get commit information
+            val change = changeRepository.findById(changeId).orElseThrow {
+                RuntimeException("Change $changeId not found")
+            }
+            val patchSet = change.patchSets.find { it["id"] == patchSetId }
+                ?: throw RuntimeException("Patch set $patchSetId not found in change $changeId")
+            
+            val commitSha = patchSet["commitId"] as String
+            
+            // Get the repository to delete the virtual branch
+            val repository = gitRepositoryService.openRepository(projectName)
+            
+            val virtualRefName = generateVirtualRef(change.changeKey, patchSetId)
+            logger.info("Deleting virtual branch: $virtualRefName")
+            try {
+                val refUpdate = repository.updateRef(virtualRefName)
+                refUpdate.setNewObjectId(ObjectId.zeroId()) // Delete the ref
+                
+                val result = refUpdate.update()
+                when (result) {
+                    RefUpdate.Result.FAST_FORWARD,
+                    RefUpdate.Result.FORCED -> {
+                        logger.info("Successfully deleted virtual branch: $virtualRefName")
+                    }
+                    else -> {
+                        logger.warn("Failed to delete virtual branch: $virtualRefName, result: $result")
+                    }
+                }
+            } finally {
+                repository.close()
+            }
+            
+        } catch (e: Exception) {
+            logger.error("Error deleting virtual branch for change $changeId, patch set $patchSetId", e)
+        }
+    }
+    
+    /**
+     * Get all virtual branches for a project.
+     * This is used for ref advertisement.
+     */
+    fun getVirtualBranchesForProject(projectName: String): Map<String, String> {
+        val virtualBranches = mutableMapOf<String, String>()
+        
+        try {
+            // Get all active changes for this project
+            val changes = changeRepository.findByProjectName(projectName, org.springframework.data.domain.PageRequest.of(0, 1000))
+            
+            for (change in changes) {
+                // Get all patch sets for this change
+                val patchSets = change.patchSets
+                
+                for (patchSet in patchSets) {
+                    val patchSetId = patchSet["id"] as Int
+                    val commitId = patchSet["commitId"] as String
+                    
+                    // Validate that the commit exists in the repository
+                    val repository = gitRepositoryService.openRepository(projectName)
+                    try {
+                        val objectId = ObjectId.fromString(commitId)
+                        if (repository.objectDatabase.has(objectId)) {
+                            val virtualRefName = generateVirtualRef(change.changeKey, patchSetId)
+                            virtualBranches[virtualRefName] = commitId
+                        } else {
+                            logger.warn("Commit $commitId for change ${change.id} patch set $patchSetId not found in repository")
+                        }
+                    } catch (e: Exception) {
+                        logger.warn("Invalid commit ID $commitId for change ${change.id} patch set $patchSetId", e)
+                    } finally {
+                        repository.close()
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            logger.error("Error getting virtual branches for project: $projectName", e)
+        }
+        
+        return virtualBranches
     }
     
     // REST API methods
@@ -1416,7 +1565,8 @@ class ChangeService(
         query: String? = null
     ): Map<String, FileInfo> {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = findPatchSetByRevisionId(change, revisionId)
+            ?: throw IllegalArgumentException("Patch set not found for revision: $revisionId")
         return GitUtil.listRevisionFiles(change, patchSet, base, parent, reviewed, query)
     }
 
@@ -1430,7 +1580,8 @@ class ChangeService(
         parent: Int? = null
     ): String {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = findPatchSetByRevisionId(change, revisionId)
+            ?: throw IllegalArgumentException("Patch set not found for revision: $revisionId")
         return GitUtil.getFileContent(change, patchSet, fileId)
     }
 
@@ -1448,7 +1599,8 @@ class ChangeService(
         whitespace: String? = null
     ): DiffInfo {
         val change = findChangeByIdentifier(changeId)
-        val patchSet = patchUtil.validateRevisionExists(change, revisionId)
+        val patchSet = findPatchSetByRevisionId(change, revisionId)
+            ?: throw IllegalArgumentException("Patch set not found for revision: $revisionId")
         return GitUtil.getFileDiff(change, patchSet, fileId, base, parent, context, intraline, whitespace)
     }
 

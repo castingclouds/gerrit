@@ -43,6 +43,8 @@ class SecurityConfig(
                     .requestMatchers("/api/login", "/api/register").permitAll()
                     // Allow OPTIONS requests for CORS preflight
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                    // Git tools and hooks - allow public access
+                    .requestMatchers("/tools/hooks/**").permitAll()
                     // Git HTTP protocol - allow anonymous read, require auth for write
                     .requestMatchers("/git/*/git-upload-pack").permitAll()
                     .requestMatchers("/git/*/info/refs").permitAll()

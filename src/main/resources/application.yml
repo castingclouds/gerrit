@@ -207,7 +207,7 @@ spring:
 
 gerrit:
   git:
-    repository-base-path: ./test-repositories
+    repository-base-path: ./repositories
     max-cached-repositories: 10
     repository-cache-ttl-seconds: 60
     operation-timeout-seconds: 60

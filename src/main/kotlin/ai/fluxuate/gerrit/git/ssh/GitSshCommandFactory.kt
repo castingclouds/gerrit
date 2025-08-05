@@ -1,6 +1,7 @@
 package ai.fluxuate.gerrit.git.ssh
 
 import ai.fluxuate.gerrit.git.GitConfiguration
+import ai.fluxuate.gerrit.git.GitReceivePackService
 import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.service.ChangeService
 
@@ -18,7 +19,8 @@ import org.springframework.stereotype.Component
 class GitSshCommandFactory(
     private val gitConfiguration: GitConfiguration,
     private val repositoryService: GitRepositoryService,
-    private val changeService: ChangeService
+    private val changeService: ChangeService,
+    private val gitReceivePackService: GitReceivePackService
 ) : CommandFactory {
     
     private val logger = LoggerFactory.getLogger(GitSshCommandFactory::class.java)
@@ -29,7 +31,7 @@ class GitSshCommandFactory(
         return when {
             command.startsWith("git-receive-pack") -> {
                 logger.info("Creating git-receive-pack command")
-                GitSshReceivePackCommand(gitConfiguration, repositoryService, changeService)
+                GitSshReceivePackCommand(gitConfiguration, repositoryService, changeService, gitReceivePackService)
             }
             command.startsWith("git-upload-pack") -> {
                 logger.info("Creating git-upload-pack command")

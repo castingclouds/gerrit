@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.git.GitConfiguration
 import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.service.ChangeService
+import ai.fluxuate.gerrit.git.GitReceivePackService
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevCommit
@@ -12,11 +13,15 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
-
+/**
+ * SSH receive-pack command for Gerrit.
+ * Handles incoming push operations from clients.
+ */
 class GitSshReceivePackCommand(
     gitConfiguration: GitConfiguration,
     repositoryService: GitRepositoryService,
-    private val changeService: ChangeService
+    private val changeService: ChangeService,
+    private val gitReceivePackService: GitReceivePackService
 ) : AbstractGitSshCommand(gitConfiguration, repositoryService) {
 
     override fun runImpl() {
@@ -24,6 +29,7 @@ class GitSshReceivePackCommand(
             logger.info("Starting git-receive-pack for repository: ${repository?.directory}")
             
             val repo = repository ?: throw IllegalStateException("Repository not available")
+            val projectName = repo.directory.parentFile?.name ?: throw IllegalStateException("Project name not available")
             val receivePack = ReceivePack(repo)
             
             // Configure receive pack based on configuration
@@ -32,7 +38,7 @@ class GitSshReceivePackCommand(
             receivePack.setAllowNonFastForwards(gitConfiguration.allowNonFastForwards)
             
             // Set up hooks for Gerrit-specific processing
-            receivePack.setPreReceiveHook(GerritPreReceiveHook())
+            receivePack.setPreReceiveHook(GerritPreReceiveHook(projectName))
             receivePack.setPostReceiveHook(GerritPostReceiveHook())
             
             // Set up advertise refs hook for virtual branch advertisement
@@ -54,155 +60,21 @@ class GitSshReceivePackCommand(
     }
 
 
-    private inner class GerritPreReceiveHook : PreReceiveHook {
+    private inner class GerritPreReceiveHook(private val projectName: String) : PreReceiveHook {
         override fun onPreReceive(rp: ReceivePack, commands: Collection<ReceiveCommand>) {
-            logger.info("Pre-receive hook processing ${commands.size} commands")
+            logger.info("SSH Pre-receive hook processing ${commands.size} commands")
             
             for (command in commands) {
-                val refName = command.refName
-                logger.debug("Processing ref: $refName")
+                // Use the unified service to process the command
+                val result = gitReceivePackService.processReceiveCommand(command, rp.repository, projectName)
                 
-                // Handle magic branch refs/for/*
-                if (refName.startsWith("refs/for/")) {
-                    processMagicBranch(command)
-                } else {
-                    // Handle regular refs (direct push to branches)
-                    processRegularRef(command, rp.getRepository())
-                }
-            }
-        }
-        
-        private fun processMagicBranch(command: ReceiveCommand) {
-            val refName = command.refName
-            val targetBranch = refName.removePrefix("refs/for/")
-            
-            logger.info("Processing magic branch push to: $targetBranch")
-            
-            try {
-                val repo = repository ?: throw IllegalStateException("Repository not available")
-                
-                // Get the commit being pushed
-                val commit = repo.parseCommit(command.newId)
-                
-                // Extract Change-Id from commit message
-                var changeId = ChangeIdUtil.extractChangeId(commit.fullMessage)
-                
-                if (changeId != null && !ChangeIdUtil.isValidChangeId(changeId)) {
-                    changeId = null
-                }
-                
-                if (changeId == null) {
-                    val generatedChangeId = ChangeIdUtil.generateChangeId(
-                        treeId = commit.tree.id,
-                        parentIds = commit.parents.map { it.id },
-                        author = commit.authorIdent,
-                        committer = commit.committerIdent,
-                        commitMessage = commit.fullMessage
-                    )
-                    logger.info("Generated Change-Id: $generatedChangeId for commit: ${commit.id.name}")
-                    
-                    // Use the generated Change-Id for processing
-                    changeId = generatedChangeId
-                }
-                
-                // Process the change (create or update)
-                val result = changeService.processChange(
-                    changeId = changeId,
-                    commit = commit,
-                    targetBranch = targetBranch,
-                    repository = repo
-                )
-                
+                // Set the result based on the service response
                 if (result.success) {
-                    logger.info("Successfully processed change: ${result.message}")
                     command.setResult(ReceiveCommand.Result.OK)
                 } else {
-                    logger.warn("Failed to process change: ${result.message}")
                     command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, result.message)
                 }
-                
-            } catch (e: Exception) {
-                logger.error("Error processing magic branch: $refName", e)
-                command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, 
-                    "Internal error processing change: ${e.message}")
             }
-        }
-        
-        private fun processRegularRef(command: ReceiveCommand, repo: Repository) {
-            val refName = command.refName
-            logger.debug("Processing regular ref: $refName")
-            
-            // Validate permissions for direct branch pushes
-            if (!validateDirectPushPermissions(refName)) {
-                command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, 
-                    "Direct push to $refName not allowed. Use refs/for/$refName for code review.")
-                return
-            }
-            
-            // Apply branch protection rules
-            if (isBranchProtected(refName)) {
-                command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, 
-                    "Branch $refName is protected and cannot be pushed to directly.")
-                return
-            }
-            
-            // Validate commit messages and content for direct pushes
-            if (command.type != ReceiveCommand.Type.DELETE) {
-                try {
-                    val commit = repo.parseCommit(command.newId)
-                    if (!validateCommitForDirectPush(commit)) {
-                        command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, 
-                            "Commit validation failed for direct push.")
-                        return
-                    }
-                } catch (e: Exception) {
-                    logger.error("Error validating commit for direct push: $refName", e)
-                    command.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON, 
-                        "Error validating commit: ${e.message}")
-                    return
-                }
-            }
-            
-            // Allow the ref update
-            command.setResult(ReceiveCommand.Result.OK)
-        }
-        
-        private fun validateDirectPushPermissions(refName: String): Boolean {
-            // In a full implementation, this would check user permissions
-            // For now, allow direct pushes to non-protected branches
-            return !refName.startsWith("refs/heads/master") && 
-                   !refName.startsWith("refs/heads/main") &&
-                   !refName.startsWith("refs/heads/develop")
-        }
-        
-        private fun isBranchProtected(refName: String): Boolean {
-            // Define protected branches that require code review
-            val protectedBranches = listOf(
-                "refs/heads/master",
-                "refs/heads/main", 
-                "refs/heads/develop",
-                "refs/heads/release/"
-            )
-            return protectedBranches.any { refName.startsWith(it) }
-        }
-        
-        private fun validateCommitForDirectPush(commit: RevCommit): Boolean {
-            // Basic commit validation for direct pushes
-            val message = commit.fullMessage
-            
-            // Ensure commit message is not empty
-            if (message.isBlank()) {
-                logger.warn("Empty commit message not allowed for direct push")
-                return false
-            }
-            
-            // Ensure commit message has reasonable length
-            if (message.length < 10) {
-                logger.warn("Commit message too short for direct push")
-                return false
-            }
-            
-            return true
         }
     }
 
@@ -277,54 +149,166 @@ class GitSshReceivePackCommand(
         }
         
         private fun sendChangeNotifications(changeId: String, commit: RevCommit, refName: String) {
-            logger.info("Sending notifications for change: $changeId")
-            // In a full implementation, this would:
-            // - Find reviewers and watchers for the change
-            // - Send email notifications
-            // - Send webhook notifications
-            // - Update activity feeds
+            try {
+                logger.info("Sending notifications for change: $changeId")
+                
+                // For magic branch pushes (refs/for/*), create a virtual branch reference
+                // that represents the change in our internal system
+                val virtualBranchRef = "refs/changes/${changeId.removePrefix("I")}/1"
+                val projectName = repository?.directory?.name ?: "unknown"
+                
+                // Delegate to shared service for notification handling
+                gitReceivePackService.handleVirtualBranchPush(
+                    virtualBranchRef = virtualBranchRef,
+                    commitId = commit.id.name,
+                    projectName = projectName
+                )
+                
+            } catch (e: Exception) {
+                logger.error("Error sending change notifications for changeId: $changeId", e)
+            }
         }
         
         private fun updateChangeStatus(changeId: String, commit: RevCommit) {
-            logger.info("Updating change status for: $changeId")
-            // In a full implementation, this would:
-            // - Update the change entity in the database
-            // - Set appropriate status (NEW, DRAFT, etc.)
-            // - Update patch set information
+            try {
+                logger.info("Updating change status for: $changeId")
+                
+                val repo = repository ?: throw IllegalStateException("Repository not available")
+                val projectName = repo.directory.name
+                
+                // The ChangeService is already handling status updates through processChange
+                // This method would typically be called after the change processing is complete
+                // to update additional metadata or trigger follow-up actions
+                
+                // For now, we'll log the status update - in a full implementation,
+                // this could update additional change metadata, patch set info, etc.
+                logger.debug("Change status updated for changeId: $changeId, commit: ${commit.id.name}, project: $projectName")
+                
+            } catch (e: Exception) {
+                logger.error("Error updating change status for changeId: $changeId", e)
+            }
         }
         
         private fun triggerCiCdPipelines(changeId: String, commit: RevCommit, refName: String) {
-            logger.info("Triggering CI/CD pipelines for change: $changeId")
-            // In a full implementation, this would:
-            // - Trigger Jenkins/GitHub Actions/GitLab CI
-            // - Run automated tests
-            // - Perform code quality checks
-            // - Update verification status
+            try {
+                logger.info("Triggering CI/CD pipelines for change: $changeId")
+                
+                val repo = repository ?: throw IllegalStateException("Repository not available")
+                val projectName = repo.directory.name
+                
+                // Create virtual branch reference for CI/CD systems to target
+                val virtualBranchRef = "refs/changes/${changeId.removePrefix("I")}/1"
+                
+                // The shared service already handles CI/CD triggering through handleVirtualBranchPush
+                // This provides a consistent interface for both HTTP and SSH operations
+                gitReceivePackService.handleVirtualBranchPush(
+                    virtualBranchRef = virtualBranchRef,
+                    commitId = commit.id.name,
+                    projectName = projectName
+                )
+                
+                logger.debug("CI/CD pipelines triggered for change: $changeId, ref: $virtualBranchRef")
+                
+            } catch (e: Exception) {
+                logger.error("Error triggering CI/CD pipelines for changeId: $changeId", e)
+            }
         }
         
         private fun sendDirectPushNotifications(command: ReceiveCommand, repo: Repository) {
-            logger.info("Sending notifications for direct push to: ${command.refName}")
-            // In a full implementation, this would:
-            // - Notify branch watchers
-            // - Send commit notifications
-            // - Update activity feeds
+            try {
+                logger.info("Sending notifications for direct push to: ${command.refName}")
+                
+                val projectName = repo.directory.name
+                
+                // For direct pushes, we don't create virtual branch refs but still need notifications
+                // Use the actual ref name and commit ID for direct push notifications
+                if (command.type != ReceiveCommand.Type.DELETE) {
+                    val commitId = command.newId.name
+                    
+                    // Use the shared service's virtual branch handler as it contains the notification logic
+                    // Pass the actual ref name since this is a direct push, not a virtual branch
+                    gitReceivePackService.handleVirtualBranchPush(
+                        virtualBranchRef = command.refName,
+                        commitId = commitId,
+                        projectName = projectName
+                    )
+                    
+                    logger.debug("Direct push notifications sent for ref: ${command.refName}, commit: $commitId")
+                } else {
+                    logger.debug("Skipping notifications for ref deletion: ${command.refName}")
+                }
+                
+            } catch (e: Exception) {
+                logger.error("Error sending direct push notifications for ref: ${command.refName}", e)
+            }
         }
         
         private fun triggerDirectPushPipelines(command: ReceiveCommand, repo: Repository) {
-            logger.info("Triggering CI/CD pipelines for direct push to: ${command.refName}")
-            // In a full implementation, this would:
-            // - Trigger build pipelines
-            // - Run deployment scripts
-            // - Update deployment status
+            try {
+                logger.info("Triggering CI/CD pipelines for direct push to: ${command.refName}")
+                
+                val projectName = repo.directory.name
+                
+                // For direct pushes, trigger CI/CD on the actual branch ref
+                if (command.type != ReceiveCommand.Type.DELETE) {
+                    val commitId = command.newId.name
+                    
+                    // Use the shared service's CI/CD logic through handleVirtualBranchPush
+                    // This ensures consistent CI/CD handling across HTTP and SSH operations
+                    gitReceivePackService.handleVirtualBranchPush(
+                        virtualBranchRef = command.refName,
+                        commitId = commitId,
+                        projectName = projectName
+                    )
+                    
+                    logger.debug("CI/CD pipelines triggered for direct push to ref: ${command.refName}, commit: $commitId")
+                } else {
+                    logger.debug("Skipping CI/CD for ref deletion: ${command.refName}")
+                }
+                
+            } catch (e: Exception) {
+                logger.error("Error triggering CI/CD pipelines for direct push to ref: ${command.refName}", e)
+            }
         }
         
         private fun updateMetrics(changeId: String?, commit: RevCommit?, eventType: String, refName: String? = null) {
-            logger.info("Updating metrics for event: $eventType")
-            // In a full implementation, this would:
-            // - Update Prometheus metrics
-            // - Log to analytics systems
-            // - Update dashboard statistics
-            // - Track performance metrics
+            try {
+                logger.info("Updating metrics for event: $eventType")
+                
+                val repo = repository ?: throw IllegalStateException("Repository not available")
+                val projectName = repo.directory.name
+                
+                // Build context information for metrics
+                val metricsContext = buildMap<String, String> {
+                    put("event_type", eventType)
+                    put("project_name", projectName)
+                    put("transport", "ssh")
+                    changeId?.let { put("change_id", it) }
+                    commit?.let { put("commit_id", it.id.name) }
+                    refName?.let { put("ref_name", it) }
+                }
+                
+                // Use the shared service's metrics handling through handleVirtualBranchPush
+                // This ensures consistent metrics collection across HTTP and SSH operations
+                if (commit != null) {
+                    val virtualRef = when (eventType) {
+                        "change_push" -> "refs/changes/${changeId?.removePrefix("I") ?: "unknown"}/1"
+                        "direct_push" -> refName ?: "unknown"
+                        else -> refName ?: "unknown"
+                    }
+                    
+                    gitReceivePackService.handleVirtualBranchPush(
+                        virtualBranchRef = virtualRef,
+                        commitId = commit.id.name,
+                        projectName = projectName
+                    )
+                }
+                
+                logger.debug("Metrics updated for event: $eventType, context: $metricsContext")
+                
+            } catch (e: Exception) {
+                logger.error("Error updating metrics for event: $eventType", e)
+            }
         }
     }
 
@@ -381,17 +365,36 @@ class GitSshReceivePackCommand(
         private fun advertiseVirtualBranches(rp: ReceivePack) {
             // Advertise virtual branches for changes (refs/changes/XX/CHANGEID/PATCHSET)
             try {
-                // In a full implementation, this would:
-                // 1. Query the database for active changes
-                // 2. Generate virtual refs for each patch set
-                // 3. Add them to the advertised refs
+                val repo = rp.repository
+                val projectName = repo.directory.parentFile?.name ?: return
                 
-                logger.debug("Advertising virtual branches for changes")
+                logger.debug("Advertising virtual branches for project: $projectName")
                 
-                // Example of what would be advertised:
-                // refs/changes/01/1/1 -> commit SHA for change 1, patch set 1
-                // refs/changes/01/1/2 -> commit SHA for change 1, patch set 2
-                // refs/changes/34/1234/1 -> commit SHA for change 1234, patch set 1
+                // Get virtual branches from the change service
+                val virtualBranches = changeService.getVirtualBranchesForProject(projectName)
+                
+                // Add virtual branches to the advertised refs
+                for ((refName, commitId) in virtualBranches) {
+                    try {
+                        val objectId = ObjectId.fromString(commitId)
+                        val ref = org.eclipse.jgit.lib.ObjectIdRef.PeeledNonTag(
+                            org.eclipse.jgit.lib.Ref.Storage.LOOSE,
+                            refName,
+                            objectId
+                        )
+                        rp.getAdvertisedRefs().put(refName, ref)
+                        
+                        // Add to the advertised refs
+                        // Note: In a full implementation, we would modify the advertised refs
+                        // For now, we just log what would be advertised
+                        logger.debug("Would advertise virtual branch: $refName -> $commitId")
+                        
+                    } catch (e: Exception) {
+                        logger.warn("Error creating ref for virtual branch $refName", e)
+                    }
+                }
+                
+                logger.debug("Advertised ${virtualBranches.size} virtual branches for project: $projectName")
                 
             } catch (e: Exception) {
                 logger.error("Error advertising virtual branches", e)

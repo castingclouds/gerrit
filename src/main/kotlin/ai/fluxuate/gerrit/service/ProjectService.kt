@@ -4,6 +4,7 @@ import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.BadRequestException
 import ai.fluxuate.gerrit.api.exception.ConflictException
 import ai.fluxuate.gerrit.api.exception.NotFoundException
+import ai.fluxuate.gerrit.git.GitConfiguration
 import ai.fluxuate.gerrit.git.GitRepositoryService
 import ai.fluxuate.gerrit.model.ProjectEntity
 import ai.fluxuate.gerrit.model.ProjectState
@@ -20,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional
 @Transactional
 class ProjectService(
     private val projectRepository: ProjectEntityRepository,
-    private val gitRepositoryService: GitRepositoryService
+    private val gitRepositoryService: GitRepositoryService,
+    private val gitConfiguration: GitConfiguration
 ) {
 
     // REST API methods
@@ -96,12 +98,14 @@ class ProjectService(
         
         // Initialize Git repository
         try {
+            val defaultBranch = input.defaultBranch ?: gitConfiguration.trunkBranchName
             gitRepositoryService.createRepository(
                 projectName, 
                 bare = true, 
-                createEmptyCommit = input.createEmptyCommit ?: true
+                createEmptyCommit = input.createEmptyCommit ?: true,
+                defaultBranch = defaultBranch
             )
-            // Repository is created with or without initial commit based on UI selection
+            // Repository is created with the specified default branch
         } catch (e: Exception) {
             // If Git repository creation fails, clean up the database entry
             projectRepository.delete(savedProject)
@@ -279,6 +283,51 @@ class ProjectService(
         return input.ref
     }
 
+    /**
+     * Get project default branch.
+     */
+    fun getProjectDefaultBranch(projectName: String): String {
+        val project = projectRepository.findByName(projectName)
+            ?: throw IllegalArgumentException("Project not found: $projectName")
+        
+        val config = project.config as? Map<String, Any> ?: emptyMap()
+        return config["defaultBranch"] as? String ?: gitConfiguration.trunkBranchName
+    }
+
+    /**
+     * Set project default branch.
+     */
+    @Transactional
+    fun setProjectDefaultBranch(projectName: String, branchName: String): String {
+        val project = projectRepository.findByName(projectName)
+            ?: throw IllegalArgumentException("Project not found: $projectName")
+        
+        val updatedConfig = project.config.toMutableMap()
+        updatedConfig["defaultBranch"] = branchName
+        
+        val updatedProject = project.copy(config = updatedConfig)
+        projectRepository.save(updatedProject)
+        
+        return branchName
+    }
+
+    /**
+     * Reset project default branch.
+     */
+    @Transactional
+    fun resetProjectDefaultBranch(projectName: String): String {
+        val project = projectRepository.findByName(projectName)
+            ?: throw IllegalArgumentException("Project not found: $projectName")
+        
+        val updatedConfig = project.config.toMutableMap()
+        updatedConfig.remove("defaultBranch")
+        
+        val updatedProject = project.copy(config = updatedConfig)
+        projectRepository.save(updatedProject)
+        
+        return gitConfiguration.trunkBranchName
+    }
+
     // Helper methods
 
     private fun findProjectByName(projectName: String): ProjectEntity {
@@ -355,6 +404,7 @@ class ProjectService(
     private fun buildProjectConfig(input: ProjectInput): Map<String, Any> {
         val config = mutableMapOf<String, Any>()
         
+        input.defaultBranch?.let { config["defaultBranch"] = it }
         input.submitType?.let { config["submit_type"] = it.name }
         input.useContributorAgreements?.let { config["use_contributor_agreements"] = it.name }
         input.useSignedOffBy?.let { config["use_signed_off_by"] = it.name }

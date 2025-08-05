@@ -33,7 +33,7 @@ class GitRepositoryService(
     /**
      * Creates a new bare Git repository with an initial branch.
      */
-    fun createRepository(projectName: String, bare: Boolean = true, createEmptyCommit: Boolean = true): Repository {
+    fun createRepository(projectName: String, bare: Boolean = true, createEmptyCommit: Boolean = true, defaultBranch: String = "main"): Repository {
         val repositoryPath = getRepositoryPath(projectName)
         
         if (repositoryPath.exists()) {
@@ -46,18 +46,15 @@ class GitRepositoryService(
             Git.init()
                 .setDirectory(repositoryPath.toFile())
                 .setBare(bare)
-                .setInitialBranch("trunk")
+                .setInitialBranch(defaultBranch)
                 .call()
         } catch (e: Exception) {
             throw GitRepositoryException("Failed to create repository '$projectName'", e)
         }
 
-        // Install Git hooks
-        installGitHooks(repositoryPath)
-        
-        // Create an initial empty commit to establish the trunk branch only if requested
+        // Create an initial empty commit to establish the default branch only if requested
         if (createEmptyCommit) {
-            createInitialCommitForBareRepository(gitRepo)
+            createInitialCommitForBareRepository(gitRepo, defaultBranch)
         }
         
         return gitRepo.repository
@@ -66,7 +63,7 @@ class GitRepositoryService(
     /**
      * Creates an initial empty commit for a bare repository
      */
-    private fun createInitialCommitForBareRepository(git: Git) {
+    private fun createInitialCommitForBareRepository(git: Git, defaultBranch: String = "main") {
         try {
             val repository = git.repository
             
@@ -97,8 +94,8 @@ class GitRepositoryService(
                 commitId
             }
             
-            // Update the trunk branch to point to the new commit
-            val refUpdate = repository.updateRef("refs/heads/trunk")
+            // Update the default branch to point to the new commit
+            val refUpdate = repository.updateRef("refs/heads/$defaultBranch")
             refUpdate.setNewObjectId(commitId)
             refUpdate.update()
             
@@ -294,39 +291,11 @@ class GitRepositoryService(
                 hooksDir.createDirectories()
             }
 
-            // Install pre-receive hook
-            installPreReceiveHook(hooksDir)
-
             logger.debug("Successfully installed Git hooks for repository at: $repositoryPath")
         } catch (e: Exception) {
             logger.error("Failed to install Git hooks for repository at: $repositoryPath", e)
             throw GitRepositoryException("Failed to install Git hooks: ${e.message}", e)
         }
-    }
-
-    /**
-     * Installs the pre-receive hook for Change-Id validation.
-     */
-    private fun installPreReceiveHook(hooksDir: Path) {
-        val preReceiveHookPath = hooksDir.resolve("pre-receive")
-        val preReceiveHookContent = getPreReceiveHookContent()
-
-        preReceiveHookPath.writeText(preReceiveHookContent)
-
-        // Make the hook executable
-        val hookFile = preReceiveHookPath.toFile()
-        hookFile.setExecutable(true)
-
-        logger.debug("Pre-receive hook installed at: $preReceiveHookPath")
-    }
-
-    /**
-     * Returns the content of the pre-receive hook script from classpath resource.
-     */
-    private fun getPreReceiveHookContent(): String {
-        val resourceStream = javaClass.classLoader.getResourceAsStream("git-hooks/pre-receive")
-        return resourceStream?.bufferedReader()?.use { it.readText() }
-            ?: throw GitRepositoryException("Failed to load pre-receive hook from resources")
     }
 }
 

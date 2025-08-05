@@ -3,6 +3,7 @@ package ai.fluxuate.gerrit.api.controller
 import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.service.ProjectService
 import jakarta.validation.Valid
+import jakarta.validation.constraints.NotBlank
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -184,4 +185,46 @@ class ProjectsController(
         val head = projectService.setHead(projectName, input)
         return ResponseEntity.ok(head)
     }
+
+    /**
+     * Get project default branch.
+     * GET /a/projects/{project-name}/config/default-branch
+     */
+    @GetMapping("/{projectName}/config/default-branch")
+    fun getProjectDefaultBranch(@PathVariable projectName: String): ResponseEntity<DefaultBranchResponse> {
+        val defaultBranch = projectService.getProjectDefaultBranch(projectName)
+        return ResponseEntity.ok(DefaultBranchResponse(defaultBranch))
+    }
+
+    /**
+     * Set project default branch.
+     * PUT /a/projects/{project-name}/config/default-branch
+     */
+    @PutMapping("/{projectName}/config/default-branch")
+    fun setProjectDefaultBranch(
+        @PathVariable projectName: String,
+        @Valid @RequestBody request: SetDefaultBranchRequest
+    ): ResponseEntity<DefaultBranchResponse> {
+        val defaultBranch = projectService.setProjectDefaultBranch(projectName, request.branchName)
+        return ResponseEntity.ok(DefaultBranchResponse(defaultBranch))
+    }
+
+    /**
+     * Reset project default branch.
+     * DELETE /a/projects/{project-name}/config/default-branch
+     */
+    @DeleteMapping("/{projectName}/config/default-branch")
+    fun resetProjectDefaultBranch(@PathVariable projectName: String): ResponseEntity<DefaultBranchResponse> {
+        val defaultBranch = projectService.resetProjectDefaultBranch(projectName)
+        return ResponseEntity.ok(DefaultBranchResponse(defaultBranch))
+    }
+
+    data class DefaultBranchResponse(
+        val branchName: String
+    )
+
+    data class SetDefaultBranchRequest(
+        @field:NotBlank(message = "Branch name cannot be blank")
+        val branchName: String
+    )
 }

@@ -21,9 +21,10 @@ Our implementation consists of the following components:
 
 ### 2. Git Hooks
 
-- **[commit-msg](hooks/commit-msg)**: A client-side hook that automatically adds Change-IDs to commit messages.
-- **[pre-receive](hooks/pre-receive)**: A server-side hook that validates that all incoming commits have valid Change-IDs.
-- **[README.md](hooks/README.md)**: Instructions for installing and using the Git hooks.
+The following Git hooks are used to implement and enforce the Gerrit workflow:
+
+- **[commit-msg](hooks/commit-msg)**: A client-side hook that ensures commits have valid Change-IDs. This hook is required for proper operation of the Gerrit workflow.
+- **[update](hooks/update)**: A server-side hook that processes pushes to `refs/for/*` branches through the Gerrit workflow system.
 
 ### 3. Examples
 
@@ -71,7 +72,6 @@ The following components have been implemented:
 
 - ✅ Change-ID generation and validation
 - ✅ Client-side commit-msg hook
-- ✅ Server-side pre-receive hook
 - ✅ Example script demonstrating the workflow
 - ✅ Comprehensive documentation
 
@@ -88,8 +88,7 @@ To start using the Gerrit workflow:
 
 1. Read the [Gerrit Workflow Implementation Guide](docs/gerrit-workflow-implementation-guide.md) to understand the concepts and architecture.
 2. Install the [commit-msg](hooks/commit-msg) hook in your local repository following the instructions in [hooks/README.md](hooks/README.md).
-3. Install the [pre-receive](hooks/pre-receive) hook on the server following the instructions in [hooks/README.md](hooks/README.md).
-4. Try out the workflow using the [gerrit-workflow-example.sh](examples/gerrit-workflow-example.sh) script as a reference.
+3. Try out the workflow using the [gerrit-workflow-example.sh](examples/gerrit-workflow-example.sh) script as a reference.
 
 ## Best Practices
 

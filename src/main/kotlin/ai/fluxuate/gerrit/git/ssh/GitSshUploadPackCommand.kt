@@ -410,17 +410,32 @@ class GitSshUploadPackCommand(
         
         private fun advertiseVirtualBranchesForUpload(up: UploadPack) {
             try {
-                logger.debug("Advertising virtual branches for changes in upload-pack")
+                val repo = up.repository
+                val projectName = repo.directory.parentFile?.name ?: return
                 
-                // In a full implementation, this would:
-                // 1. Query the database for changes the user can access
-                // 2. Generate virtual refs for each accessible patch set
-                // 3. Add them to the advertised refs for fetching
+                logger.debug("Advertising virtual branches for upload in project: $projectName")
                 
-                // Example virtual refs that would be advertised:
-                // refs/changes/01/1/1 -> commit SHA for change 1, patch set 1
-                // refs/changes/01/1/2 -> commit SHA for change 1, patch set 2
-                // refs/changes/34/1234/1 -> commit SHA for change 1234, patch set 1
+                // Get virtual branches from the change service
+                val virtualBranches = changeService.getVirtualBranchesForProject(projectName)
+                
+                // Add virtual branches to the advertised refs for fetching
+                for ((refName, commitId) in virtualBranches) {
+                    try {
+                        val objectId = ObjectId.fromString(commitId)
+                        // Add the virtual ref to the advertised refs
+                        val ref = org.eclipse.jgit.lib.ObjectIdRef.PeeledNonTag(
+                            org.eclipse.jgit.lib.Ref.Storage.LOOSE,
+                            refName,
+                            objectId
+                        )
+                        up.getAdvertisedRefs().put(refName, ref)
+                        
+                    } catch (e: Exception) {
+                        logger.warn("Error creating ref for virtual branch $refName", e)
+                    }
+                }
+                
+                logger.debug("Advertised ${virtualBranches.size} virtual branches for upload in project: $projectName")
                 
             } catch (e: Exception) {
                 logger.error("Error advertising virtual branches for upload", e)

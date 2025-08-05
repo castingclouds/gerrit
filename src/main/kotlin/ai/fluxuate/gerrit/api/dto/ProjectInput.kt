@@ -16,6 +16,7 @@ data class ProjectInput(
     val description: String? = null,
     @JsonProperty("create_empty_commit")
     val createEmptyCommit: Boolean? = null,
+    val defaultBranch: String? = null,
     val branches: List<String>? = null,
     val owners: List<String>? = null,
     @JsonProperty("use_contributor_agreements")

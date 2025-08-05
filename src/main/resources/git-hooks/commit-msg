@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# Gerrit commit-msg hook to add Change-Id to commit messages.
+# This hook is installed in client repositories to automatically
+# add Change-Id footers to commit messages.
+#
+# To install this hook:
+# curl -Lo .git/hooks/commit-msg http://localhost:8080/tools/hooks/commit-msg
+# chmod +x .git/hooks/commit-msg
+
+# Function to generate a Change-Id
+generate_change_id() {
+    # Get the commit message
+    commit_msg=$(cat "$1")
+    
+    # Get git information
+    tree_id=$(git write-tree)
+    parent_ids=""
+    
+    # Get parent commit IDs
+    if git rev-parse --verify HEAD >/dev/null 2>&1; then
+        parent_ids=$(git rev-parse HEAD)
+    fi
+    
+    # Get author information from git config
+    author_name=$(git config user.name)
+    author_email=$(git config user.email)
+    
+    # Create a unique identifier based on:
+    # - Tree ID
+    # - Parent commit IDs
+    # - Author information
+    # - Commit message (without existing Change-Id)
+    # Note: No timestamp to ensure Change-ID stability across amendments
+    
+    # Remove any existing Change-Id from the message
+    clean_msg=$(echo "$commit_msg" | sed '/^Change-Id:/d')
+    
+    # Create a hash from the components
+    hash_input="${tree_id}${parent_ids}${author_name}${author_email}${clean_msg}"
+    change_id="I$(echo "$hash_input" | sha1sum | cut -c1-40)"
+    
+    echo "$change_id"
+}
+
+# Function to check if Change-Id already exists
+has_change_id() {
+    grep -q "^Change-Id:" "$1"
+}
+
+# Function to add Change-Id to commit message
+add_change_id() {
+    local msg_file="$1"
+    local change_id="$2"
+    
+    # Add Change-Id to the end of the commit message
+    echo "" >> "$msg_file"
+    echo "Change-Id: $change_id" >> "$msg_file"
+}
+
+# Main execution
+main() {
+    local msg_file="$1"
+    
+    # Check if Change-Id already exists
+    if has_change_id "$msg_file"; then
+        echo "Change-Id already present in commit message"
+        exit 0
+    fi
+    
+    # Generate Change-Id
+    change_id=$(generate_change_id "$msg_file")
+    
+    # Add Change-Id to commit message
+    add_change_id "$msg_file" "$change_id"
+    
+    echo "Added Change-Id: $change_id to commit message"
+}
+
+# Run main function with the commit message file
+main "$1" 
