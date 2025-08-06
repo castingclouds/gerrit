@@ -54,11 +54,10 @@ data class PatchSetEntity(
 
     /**
      * File modifications in this patch set.
-     * Stored as JSONB for complex diff data.
+     * One-to-many relationship with DiffEntity for better scalability.
      */
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "file_modifications", columnDefinition = "jsonb")
-    val fileModifications: List<Map<String, Any>> = emptyList(),
+    @OneToMany(mappedBy = "patchSet", cascade = [CascadeType.ALL], fetch = FetchType.LAZY)
+    val diffs: List<DiffEntity> = emptyList(),
 
     /**
      * Additional metadata stored as JSONB.

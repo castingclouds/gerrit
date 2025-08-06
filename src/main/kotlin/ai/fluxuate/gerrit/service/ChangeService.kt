@@ -2,6 +2,7 @@ package ai.fluxuate.gerrit.service
 
 import ai.fluxuate.gerrit.util.ChangeIdUtil
 import ai.fluxuate.gerrit.util.CommitMessagesUtil
+import ai.fluxuate.gerrit.util.FileModificationsUtil
 import ai.fluxuate.gerrit.util.GitUtil
 import ai.fluxuate.gerrit.util.PatchUtil
 import ai.fluxuate.gerrit.util.RebaseUtil
@@ -11,6 +12,7 @@ import ai.fluxuate.gerrit.model.ChangeEntity
 import ai.fluxuate.gerrit.model.ChangeStatus
 import ai.fluxuate.gerrit.model.PatchSetEntity
 import ai.fluxuate.gerrit.repository.ChangeEntityRepository
+import ai.fluxuate.gerrit.repository.DiffRepository
 import ai.fluxuate.gerrit.repository.PatchSetRepository
 import ai.fluxuate.gerrit.api.dto.*
 import ai.fluxuate.gerrit.api.exception.NotFoundException
@@ -36,11 +38,13 @@ import kotlin.random.Random
 class ChangeService(
     private val changeRepository: ChangeEntityRepository,
     private val patchSetRepository: PatchSetRepository,
+    private val diffRepository: DiffRepository,
     private val accountService: AccountService,
     private val rebaseUtil: RebaseUtil,
     private val patchUtil: PatchUtil,
     private val reviewersUtil: ReviewersUtil,
-    private val gitRepositoryService: GitRepositoryService
+    private val gitRepositoryService: GitRepositoryService,
+    private val fileModificationsUtil: FileModificationsUtil
 ) {
     
     private val logger = LoggerFactory.getLogger(ChangeService::class.java)
@@ -126,9 +130,9 @@ class ChangeService(
                 val existingChange = changeRepository.findByChangeKey(changeId)
                 
                 return if (existingChange != null) {
-                    updateExistingChange(existingChange, commit, newObjectId, targetBranch, ownerId, projectName)
+                    updateExistingChange(existingChange, commit, newObjectId, targetBranch, ownerId, projectName, repository)
                 } else {
-                    createNewChange(changeId, commit, newObjectId, projectName, targetBranch, ownerId)
+                    createNewChange(changeId, commit, newObjectId, projectName, targetBranch, ownerId, repository)
                 }
             }
             
@@ -161,9 +165,9 @@ class ChangeService(
             val existingChange = changeRepository.findByChangeKey(changeId)
             
             return if (existingChange != null) {
-                updateExistingChange(existingChange, commit, commit.id, targetBranch, ownerId, projectName)
+                updateExistingChange(existingChange, commit, commit.id, targetBranch, ownerId, projectName, repository)
             } else {
-                createNewChange(changeId, commit, commit.id, projectName, targetBranch, ownerId)
+                createNewChange(changeId, commit, commit.id, projectName, targetBranch, ownerId, repository)
             }
             
         } catch (e: Exception) {
@@ -210,7 +214,8 @@ class ChangeService(
         commitObjectId: ObjectId,
         projectName: String,
         targetBranch: String,
-        ownerId: Int
+        ownerId: Int,
+        repository: Repository
     ): ProcessResult {
         try {
             val subject = extractSubject(commit.fullMessage)
@@ -231,7 +236,7 @@ class ChangeService(
             
             val savedChange = changeRepository.save(change)
             
-            // Now create the initial patch set with reference to the saved change
+            // Create the initial patch set first (without diffs)
             val patchSet = PatchSetEntity(
                 change = savedChange,
                 patchSetNumber = 1,
@@ -242,7 +247,18 @@ class ChangeService(
                 description = "Initial patch set"
             )
             
-            patchSetRepository.save(patchSet)
+            val savedPatchSet = patchSetRepository.save(patchSet)
+            
+            // Calculate and save file diffs for the initial patch set
+            val diffs = fileModificationsUtil.calculateFileModifications(
+                patchSet = savedPatchSet,
+                repository = repository,
+                newCommitId = commitObjectId,
+                baseCommitId = null // Compare against empty tree for initial patch set
+            )
+            
+            // Save all the diff entities
+            diffRepository.saveAll(diffs)
             
             logger.info("Created new change: ${savedChange.id} with Change-Id: $changeId")
             
@@ -270,7 +286,8 @@ class ChangeService(
         commitObjectId: ObjectId,
         targetBranch: String,
         ownerId: Int,
-        projectName: String
+        projectName: String,
+        repository: Repository
     ): ProcessResult {
         try {
             // Validate that the target branch matches
@@ -301,7 +318,7 @@ class ChangeService(
             
             val savedChange = changeRepository.save(updatedChange)
             
-            // Now create the new patch set with reference to the updated change
+            // Create the new patch set first (without diffs)
             val newPatchSet = PatchSetEntity(
                 change = savedChange,
                 patchSetNumber = newPatchSetId,
@@ -312,7 +329,24 @@ class ChangeService(
                 description = "Patch Set $newPatchSetId"
             )
             
-            patchSetRepository.save(newPatchSet)
+            val savedPatchSet = patchSetRepository.save(newPatchSet)
+            
+            // Calculate file modifications for the new patch set
+            // Compare against the previous patch set
+            val previousPatchSet = existingChange.patchSets
+                .filter { it.patchSetNumber < newPatchSetId }
+                .maxByOrNull { it.patchSetNumber }
+            val baseCommitId = previousPatchSet?.let { ObjectId.fromString(it.commitId) }
+            
+            val diffs = fileModificationsUtil.calculateFileModifications(
+                patchSet = savedPatchSet,
+                repository = repository,
+                newCommitId = commitObjectId,
+                baseCommitId = baseCommitId
+            )
+            
+            // Save all the diff entities
+            diffRepository.saveAll(diffs)
             
             logger.info("Updated change ${savedChange.id} with new patch set $newPatchSetId")
             
